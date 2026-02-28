@@ -1,0 +1,1372 @@
+@page "/General/ImportPricelist"
+@using System.Data
+@using System.Globalization
+@using System.Reflection
+@using System.Text
+@using System.Text.RegularExpressions
+@using Microsoft.Data.SqlClient
+@using Newtonsoft.Json
+@inject IJSRuntime jsRuntime
+@inject IConfiguration config
+@inject NavigationManager nav
+
+<div class="unified-margin-top-main-view">
+    <ul class="w3-ul w3-card-4 iprax-card-border-radius" style="list-style:none; padding:0;">
+        <li style="display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="margin:0;">Preisliste importieren</h3>
+            <button class="button-accept" style="max-height:33px;" @onclick="ResetAll">Zurücksetzen</button>
+        </li>
+
+        @if (!loaded)
+        {
+            <li>Lade Metadaten…</li>
+        }
+        else
+        {
+            <li>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                    <InputFile OnChange="OnFileSelected" accept=".csv,text/csv" />
+                    @if (!string.IsNullOrWhiteSpace(selectedFileName))
+                    {
+                        <span style="font-style:italic;">@selectedFileName</span>
+                    }
+                    <button class="button-accept" style="max-height:33px;" @onclick="ImportParsedFile" disabled="@(!fileChosen)">Import starten</button>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(statusMessage))
+                {
+                    <div style="margin-top:10px; white-space:pre-wrap;">@statusMessage</div>
+                }
+            </li>
+
+            @if (importReady)
+            {
+                <li>
+                    <div class="w3-card iprax-card-border-radius" style="padding:12px;">
+                        <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+                            <div style="min-width:240px;">
+                                <label>Versicherungsart</label>
+                                <select class="form-select form-select-praxis-creation iprax-account-input" style="width:240px;"
+                                        value="@selectedInsuranceTypeId" @onchange="OnInsuranceTypeChanged">
+                                    @foreach (var kv in allInsuranceTypes.Where(x => x.Key != 2)) @* privat raus *@
+                                    {
+                                        <option value="@kv.Key">@kv.Value</option>
+                                    }
+                                </select>
+                            </div>
+
+                            <div style="min-width:180px;">
+                                <label>Gültig ab</label>
+                                <input class="form-select form-select-praxis-creation iprax-account-input" style="width:180px;"
+                                       type="date" @bind="validFromDateString" />
+                            </div>
+
+                            <div style="min-width:380px; flex:1;">
+                                <label>Name</label>
+                                <input class="form-select form-select-praxis-creation iprax-account-input" style="width:100%;"
+                                       maxlength="50" value="priceListName" @oninput="(_)=> OnNameChanged()" />
+                            </div>
+
+                            <div style="display:flex; gap:12px; align-items:center;">
+                                <label style="display:flex; gap:6px; align-items:center;">
+                                    <input type="checkbox" checked="isBlanko" @onchange="(_)=> RegenerateMapping()" />
+                                    Blanko
+                                </label>
+                            </div>
+                        </div>
+
+                        <hr />
+
+                        <div style="display:flex; gap:18px; flex-wrap:wrap;">
+                            <div>
+                                <div style="font-weight:600; margin-bottom:6px;">Preislistengültigkeit</div>
+
+                                <label style="display:flex; gap:6px; align-items:center;">
+                                    <input type="radio" name="split" checked="@createPLPrescriptionDate" @onclick="()=>SetSplitting(SplittingMode.PrescriptionDate)" />
+                                    nach Verordnungsdatum
+                                </label>
+                                <label style="display:flex; gap:6px; align-items:center;">
+                                    <input type="radio" name="split" checked="@createPLAppointmentDate" @onclick="()=>SetSplitting(SplittingMode.AppointmentDate)" />
+                                    nach Termindatum (Splitting)
+                                </label>
+                                <label style="display:flex; gap:6px; align-items:center;">
+                                    <input type="radio" name="split" checked="@createPLFirstAppointment" @onclick="()=>SetSplitting(SplittingMode.FirstAppointment)" />
+                                    nach erstem Termin
+                                </label>
+                                <label style="display:flex; gap:6px; align-items:center;">
+                                    <input type="radio" name="split" checked="@createPLLastAppointment" @onclick="()=>SetSplitting(SplittingMode.LastAppointment)" />
+                                    nach letztem Termin
+                                </label>
+                            </div>
+
+                            <div>
+                                <div style="font-weight:600; margin-bottom:6px;">Optionen</div>
+                                <label style="display:flex; gap:6px; align-items:center;"><input type="checkbox" @bind="createPLX9932" /> X9932</label>
+                                <label style="display:flex; gap:6px; align-items:center;"><input type="checkbox" @bind="createPLX9933" /> X9933 (pauschal)</label>
+                                <label style="display:flex; gap:6px; align-items:center;"><input type="checkbox" @bind="createPLX9934" /> X9934 (pauschal)</label>
+                                <label style="display:flex; gap:6px; align-items:center;"><input type="checkbox" @bind="createPLAgeRelevant" /> Alter relevant</label>
+
+                                <label style="display:flex; gap:6px; align-items:center;">
+                                    <input type="checkbox" checked="@createPLNumRelevant" @onchange="OnNumRelevantChanged" />
+                                    mehrere Patienten relevant
+                                </label>
+                                <label style="display:flex; gap:6px; align-items:center;">
+                                    <input type="checkbox" checked="@createPLOrderRelevant" @onchange="OnOrderRelevantChanged" />
+                                    Reihenfolge relevant
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </li>
+
+                <li>
+                    <div class="w3-card iprax-card-border-radius" style="padding:12px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                            <div style="font-weight:600;">Mapping (Region × Versicherung × Verband) inkl. LEGS</div>
+                            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                                <input class="form-select form-select-praxis-creation iprax-account-input" style="width:220px;"
+                                       placeholder="LEGS (7 Zeichen) für alle" @bind="bulkLegs" />
+                                <button class="button-accept" style="max-height:33px;" @onclick="ApplyLegsToAll" disabled="@(string.IsNullOrWhiteSpace(bulkLegs))">LEGS setzen</button>
+                                <button class="button-accept" style="max-height:33px;" @onclick="RegenerateMapping">Mapping neu generieren</button>
+                            </div>
+                        </div>
+
+                        <div style="display:flex; gap:18px; flex-wrap:wrap; margin-top:10px;">
+                            <div style="min-width:260px; max-width:420px;">
+                                <div style="font-weight:600; margin-bottom:6px;">Regionen</div>
+                                <div style="max-height:180px; overflow:auto; border:1px solid #ddd; border-radius:8px; padding:8px;">
+                                    @foreach (var r in allRegions.OrderBy(x => x.Key))
+                                    {
+                                        <label style="display:flex; gap:6px; align-items:center;">
+                                            <input type="checkbox" checked="@selectedRegions.Contains(r.Key)" @onchange="(e)=>ToggleRegion(r.Key, Convert.ToBoolean(e.Value))" />
+                                            @r.Value
+                                        </label>
+                                    }
+                                </div>
+                            </div>
+
+                            <div style="min-width:260px; max-width:520px;">
+                                <div style="font-weight:600; margin-bottom:6px;">Verbände (aus Fachbereich)</div>
+                                <div style="max-height:180px; overflow:auto; border:1px solid #ddd; border-radius:8px; padding:8px;">
+                                    @foreach (var a in GetAssociationsForCurrentDirectory())
+                                    {
+                                        <label style="display:flex; gap:6px; align-items:center;">
+                                            <input type="checkbox" checked="@selectedAssociations.Contains(a.ID)" @onchange="(e)=>ToggleAssociation(a.ID, Convert.ToBoolean(e.Value))" />
+                                            @a.Description
+                                        </label>
+                                    }
+                                </div>
+                            </div>
+
+                            <div style="min-width:260px;">
+                                <div style="font-weight:600; margin-bottom:6px;">Versicherungen (aus Versicherungsart)</div>
+                                <div style="max-height:180px; overflow:auto; border:1px solid #ddd; border-radius:8px; padding:8px;">
+                                    @foreach (var u in GetUnionsForInsuranceType())
+                                    {
+                                        <div>@GetUnionName(u.Key)</div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top:12px; overflow:auto;">
+                            <table class="w3-table w3-striped">
+                                <thead>
+                                    <tr>
+                                        <th style="min-width:180px;">Region</th>
+                                        <th style="min-width:220px;">Versicherung</th>
+                                        <th style="min-width:260px;">Verband</th>
+                                        <th style="min-width:120px;">LEGS</th>
+                                        <th style="min-width:80px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var m in mappingRows)
+                                    {
+                                        <tr>
+                                            <td>@GetRegionName(m.RegionID)</td>
+                                            <td>@GetUnionName(m.InsuranceUnionID)</td>
+                                            <td>@GetAssociationName(m.AssociationID)</td>
+                                            <td>
+                                                <input class="form-select form-select-praxis-creation iprax-account-input"
+                                                       style="width:140px;" maxlength="7" @bind="m.LEGS" />
+                                            </td>
+                                            <td>
+                                                <button class="button-accept" style="max-height:30px;" @onclick="(()=>RemoveMappingRow(m))">Entfernen</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+
+                            @if (mappingRows.Count == 0)
+                            {
+                                <div style="margin-top:8px; font-style:italic;">Kein Mapping vorhanden.</div>
+                            }
+                        </div>
+                    </div>
+                </li>
+
+                <li>
+                    <div class="w3-card iprax-card-border-radius" style="padding:12px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div style="font-weight:600;">Preise</div>
+                            <div style="display:flex; gap:10px;">
+                                <button class="button-accept" style="max-height:33px;" @onclick="AddEmptyPriceRow">+ Zeile</button>
+                            </div>
+                        </div>
+
+                        <div style="overflow:auto; margin-top:10px;">
+                            <table class="w3-table w3-striped">
+                                <thead>
+                                    <tr>
+                                        <th style="min-width:420px;">Behandlung</th>
+                                        <th style="min-width:140px; text-align:right;">Preis</th>
+                                        <th style="min-width:80px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var pr in priceRows)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <select class="form-select form-select-praxis-creation iprax-account-input" style="width:100%;"
+                                                        @bind="pr.TreatmentID">
+                                                    <option value="">—</option>
+                                                    @foreach (var opt in treatmentOptions)
+                                                    {
+                                                        <option value="@opt.Key">@opt.Value</option>
+                                                    }
+                                                </select>
+                                            </td>
+                                            <td style="text-align:right;">
+                                                <input class="form-select form-select-praxis-creation iprax-account-input"
+                                                       style="width:140px; text-align:right;"
+                                                       placeholder="0,00" @bind="pr.PriceText" />
+                                            </td>
+                                            <td>
+                                                <button class="button-accept" style="max-height:30px;" @onclick="(()=>RemovePriceRow(pr))">Entfernen</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+
+                            @if (priceRows.Count == 0)
+                            {
+                                <div style="margin-top:8px; font-style:italic;">Keine Preise geladen.</div>
+                            }
+                        </div>
+                    </div>
+                </li>
+
+                <li style="display:flex; justify-content:flex-end; gap:10px;">
+                    <button class="button-accept" style="max-height:33px;"
+                            @onclick="SaveToDatabase"
+                            disabled="@(!CanSave())">
+                        Speichern
+                    </button>
+                </li>
+            }
+        }
+    </ul>
+</div>
+
+@if (showNewTreatmentsModal)
+{
+    <div class="modal-background error-popup">
+        <div class="modal-additional-info-popup" style="padding:15px; max-width:700px;">
+            <div class="w3-ul w3-card-4 iprax-card-border-radius">
+                <li style="display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">Die Heilmittel müssen zuerst hinterlegt werden!</h3>
+                    <button class="button-accept" style="max-height:33px;" @onclick="(()=>showNewTreatmentsModal=false)">OK</button>
+                </li>
+                <li>
+                    <textarea style="width:100%; height:320px; resize:none;" readonly>@newTreatmentsText</textarea>
+                </li>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    // -----------------------------
+    // Models used for UI + DB lookups
+    // -----------------------------
+    public class RegionRow { public int ID { get; set; } public string? Description { get; set; } }
+    public class InsuranceUnionRow { public int ID { get; set; } public string? Description { get; set; } }
+    public class AssociationRow { public int ID { get; set; } public int TreatmentDirectoryID { get; set; } public string? Description { get; set; } }
+    public class TreatmentDirectoryRow { public int ID { get; set; } public string? ClassificationCode { get; set; } public string? Description { get; set; } }
+    public class PosNrRow { public string? PosNr { get; set; } }
+    public class TreatmentRow { public int ID { get; set; } public string? PosNr { get; set; } public string? Description { get; set; } public Guid UUID { get; set; } }
+
+    private class MappingRow
+    {
+        public int RegionID { get; set; }
+        public int InsuranceUnionID { get; set; }
+        public int AssociationID { get; set; }
+        public string LEGS { get; set; } = "";
+    }
+
+    private class PriceRow
+    {
+        public int? TreatmentID { get; set; }
+        public string PriceText { get; set; } = "";
+    }
+
+    private enum SplittingMode { PrescriptionDate, AppointmentDate, FirstAppointment, LastAppointment }
+
+    // -----------------------------
+    // State
+    // -----------------------------
+    private bool loaded;
+    private bool fileChosen;
+    private bool importReady;
+
+    private string? selectedFileName;
+    private IBrowserFile? selectedFile;
+    private string statusMessage = "";
+
+    private List<string[]> pricelistRawData = new();
+
+    private readonly Dictionary<int, string> allRegions = new();
+    private readonly Dictionary<int, string> allInsuranceUnions = new();
+    private readonly List<AssociationRow> allAssociations = new();
+    private readonly Dictionary<int, (string Code, string Description)> allTreatmentDirectories = new();
+    private readonly List<string> allSocialHomeVisit = new();
+    private List<string> allTreatments = new();
+
+    // Treatments available for current insurance type
+    private readonly Dictionary<int, TreatmentRow> treatmentsRestricted = new();
+    private readonly Dictionary<int, TreatmentRow> doubleTreatments = new();
+    private List<KeyValuePair<int, string>> treatmentOptions = new();
+
+    // Selection / UI values
+    private int selectedInsuranceTypeId = 1;
+    private int treatmentDirectoryID = 0;
+
+    private HashSet<int> selectedRegions = new();
+    private HashSet<int> selectedAssociations = new();
+
+    private List<MappingRow> mappingRows = new();
+    private List<PriceRow> priceRows = new();
+
+    private string validFromDateString = DateTime.Today.ToString("yyyy-MM-dd");
+    private string priceListName = "";
+    private string bulkLegs = "";
+    private bool isBlanko;
+
+    // Switch options
+    private bool createPLX9932;
+    private bool createPLX9933;
+    private bool createPLX9934;
+    private bool createPLAgeRelevant;
+    private bool createPLNumRelevant;
+    private bool createPLOrderRelevant;
+
+    // Splitting
+    private bool createPLPrescriptionDate = true;
+    private bool createPLAppointmentDate;
+    private bool createPLFirstAppointment;
+    private bool createPLLastAppointment;
+
+    // New treatments modal
+    private bool showNewTreatmentsModal;
+    private string newTreatmentsText = "";
+
+    // -----------------------------
+    // Static dictionaries from old code
+    // -----------------------------
+    private readonly Dictionary<int, string> allInsuranceTypes = new()
+    {
+        {1, "GKV"},
+        {2, "Privat"},
+        {3, "Beihilfe"},
+        {4, "Freie Heilfürsorge"},
+        {5, "Post"},
+        {6, "BG"},
+    };
+
+    private readonly Dictionary<string, List<KeyValuePair<int, string>>> allInsuranceTypesUnions = new()
+    {
+        { "GKV", new() {
+            new(1,"AOK"), new(2,"BKK"), new(3,"IKK"), new(4,"LKK"),
+            new(5,"Gartenbau"), new(6,"Knappschaft"), new(7,"VDEK"),
+            new(12,"Bundeswehr"), new(13,"außerhalb BKK/ IKK Vertragsgemeinschaft in BW"),
+        }},
+        { "Post", new() { new(8,"Post") } },
+        { "BG", new() { new(10,"BG/Unfallkassen") } },
+        { "Beihilfe", new() { new(9,"Beihilfe Bund/KVB"), new(14,"Beihilfe Land") } },
+        { "Freie Heilfürsorge", new() { new(15,"Landes-/Bereitschaftspolizei BW") } }
+    };
+
+    private readonly Dictionary<string, string> synonymInsuranceType = new(StringComparer.OrdinalIgnoreCase)
+    {
+        { "gkv", "GKV" },
+        { "gesetzlich", "GKV" },
+        { "post", "Post" },
+        { "posta", "Post" },
+        { "bei", "Beihilfe" },
+        { "beihilfe", "Beihilfe" },
+        { "hfs", "Freie Heilfürsorge" },
+        { "heilfürsorge", "Freie Heilfürsorge" }
+    };
+
+    private readonly Dictionary<int, string> unionAbbreviations = new()
+    {
+        {1,"AOK"},{2,"BKK"},{3,"IKK"},{4,"LKK"},{5,"Garten"},{6,"Knapp"},{7,"VDEK"},
+        {8,"Post"},{9,"BEI Bund"},{10,"BG"},{11,"Privat"},{12,"Bundeswehr"},
+        {13,"außerhalb BKK/ IKK Vertragsgemeinschaft in BW"},{14,"BEI Land"},{15,"Landes-/Bereitschaftspolizei BW"}
+    };
+
+    private readonly Dictionary<int, string> regionAbbreviations = new()
+    {
+        {1,"BB"},{2,"BE"},{3,"BY kath."},{4,"BW"},{5,"HB"},{6,"HH"},{7,"HE"},{8,"NI"},
+        {9,"NW Lippe"},{10,"RP"},{11,"SL"},{12,"SN"},{13,"ST"},{14,"SH"},{15,"MV"},{16,"TH"},
+        {17,"NW Rheinl."},{18,"BY evan."}
+    };
+
+    private readonly Dictionary<int, string> regionTariffCode = new()
+    {
+        {1,"12"},{2,"23"},{3,"02"},{4,"01"},{5,"04"},{6,"05"},{7,"06"},{8,"07"},
+        {9,"21"},{10,"09"},{11,"10"},{12,"13"},{13,"14"},{14,"11"},{15,"15"},{16,"16"},
+        {17,"20"},{18,"02"}
+    };
+
+    // -----------------------------
+    // Lifecycle
+    // -----------------------------
+    protected override void OnInitialized()
+    {
+        try
+        {
+            LoadMetaFromDB();
+            loaded = true;
+        }
+        catch (Exception ex)
+        {
+            loaded = true;
+            statusMessage = "Fehler beim Laden der Metadaten:\n" + ex.Message;
+        }
+    }
+
+    // -----------------------------
+    // File handling
+    // -----------------------------
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        selectedFile = e.File;
+        selectedFileName = selectedFile?.Name;
+        fileChosen = selectedFile is not null;
+        statusMessage = "";
+    }
+
+    private async Task ImportParsedFile()
+    {
+        if (selectedFile is null) return;
+
+        ResetImportOnly();
+
+        try
+        {
+            pricelistRawData = new List<string[]>();
+
+            using var stream = selectedFile.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+            using var sr = new StreamReader(stream, Encoding.UTF8);
+
+            while (!sr.EndOfStream)
+            {
+                var line = await sr.ReadLineAsync();
+                if (line is null) break;
+                pricelistRawData.Add(SplitCSV(line));
+            }
+
+            if (pricelistRawData.Count < 3)
+            {
+                statusMessage = "Die importierte Datei hat weniger als 3 Zeilen.";
+                return;
+            }
+
+            // Detect insurance type from header text
+            var key = GetInsuranceTypeKey(pricelistRawData);
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                selectedInsuranceTypeId = allInsuranceTypes.FirstOrDefault(x => x.Value == key).Key;
+                if (selectedInsuranceTypeId == 0) selectedInsuranceTypeId = 1;
+            }
+
+            // Check new treatments
+            var newTreatments = GetNewTreatmentsList(pricelistRawData);
+            if (newTreatments.Count > 0)
+            {
+                newTreatmentsText = string.Join("\r\n", newTreatments);
+                showNewTreatmentsModal = true;
+                statusMessage = "Import abgebrochen: Es gibt Positionen, die noch nicht als Treatment hinterlegt sind.";
+                return;
+            }
+
+            // Populate fields + build mapping + load treatments + prices
+            PopulateFieldsFromRaw();
+            LoadTreatmentsForInsuranceType();
+            PopulatePriceRowsFromRaw();
+
+            importReady = true;
+            statusMessage = "Import erfolgreich geladen. Bitte Mapping/Preise prüfen und dann speichern.";
+
+            // Optional warning like old code
+            await WarnIfPricelistMappingExists();
+        }
+        catch (Exception ex)
+        {
+            statusMessage = "Fehler beim Import:\n" + ex.Message;
+        }
+    }
+
+    // -----------------------------
+    // DB metadata loading
+    // -----------------------------
+    private void LoadMetaFromDB()
+    {
+        allRegions.Clear();
+        allInsuranceUnions.Clear();
+        allAssociations.Clear();
+        allTreatmentDirectories.Clear();
+        allSocialHomeVisit.Clear();
+
+        var regions = JsonConvert.DeserializeObject<RegionRow[]>(
+            Utilities.SerializedDBQuery("SELECT ID, Description FROM Region", new List<SqlParameter>())) ?? Array.Empty<RegionRow>();
+
+        foreach (var r in regions)
+        {
+            if (r.Description is null) continue;
+            allRegions[r.ID] = r.Description.Replace("NRW ", "");
+        }
+
+        var unions = JsonConvert.DeserializeObject<InsuranceUnionRow[]>(
+            Utilities.SerializedDBQuery("SELECT ID, Description FROM InsuranceUnion", new List<SqlParameter>())) ?? Array.Empty<InsuranceUnionRow>();
+
+        foreach (var u in unions)
+        {
+            if (u.Description is null) continue;
+            allInsuranceUnions[u.ID] = u.Description;
+        }
+
+        var associations = JsonConvert.DeserializeObject<AssociationRow[]>(
+            Utilities.SerializedDBQuery("SELECT ID, TreatmentDirectoryID, Description FROM Association", new List<SqlParameter>())) ?? Array.Empty<AssociationRow>();
+        allAssociations.AddRange(associations);
+
+        var dirs = JsonConvert.DeserializeObject<TreatmentDirectoryRow[]>(
+            Utilities.SerializedDBQuery("SELECT ID, ClassificationCode, Description FROM TreatmentDirectory", new List<SqlParameter>())) ?? Array.Empty<TreatmentDirectoryRow>();
+
+        foreach (var d in dirs)
+        {
+            if (string.IsNullOrWhiteSpace(d.ClassificationCode) || string.IsNullOrWhiteSpace(d.Description)) continue;
+            allTreatmentDirectories[d.ID] = (d.ClassificationCode!, d.Description!);
+        }
+
+        var hb = JsonConvert.DeserializeObject<PosNrRow[]>(
+            Utilities.SerializedDBQuery("SELECT DISTINCT PosNr FROM Treatment WHERE TreatmentCode LIKE 'HB %' AND (TreatmentCode LIKE '%sozE%' OR TreatmentCode LIKE '%RegE%') AND PraxisID = -1",
+                                       new List<SqlParameter>())) ?? Array.Empty<PosNrRow>();
+
+        foreach (var x in hb)
+        {
+            if (!string.IsNullOrWhiteSpace(x.PosNr))
+                allSocialHomeVisit.Add(x.PosNr!);
+        }
+
+        var all = JsonConvert.DeserializeObject<PosNrRow[]>(
+            Utilities.SerializedDBQuery("SELECT DISTINCT PosNr FROM Treatment WHERE PraxisID = -1 AND ISNULL(PosNr,'') <> ''",
+                                       new List<SqlParameter>())) ?? Array.Empty<PosNrRow>();
+        allTreatments = all.Where(x => !string.IsNullOrWhiteSpace(x.PosNr)).Select(x => x.PosNr!).ToList();
+    }
+
+    // -----------------------------
+    // Treatment loading (restricted by insurance type)
+    // -----------------------------
+    private void LoadTreatmentsForInsuranceType()
+    {
+        treatmentsRestricted.Clear();
+        doubleTreatments.Clear();
+
+        int treatmentTypeID = selectedInsuranceTypeId switch
+        {
+            3 => 6,        // Beihilfe
+            4 => 1,        // FH -> type 1
+            5 => 1,        // Post -> type 1
+            6 => 3,        // BG -> type 3
+            _ => selectedInsuranceTypeId
+        };
+
+        var restricted = JsonConvert.DeserializeObject<TreatmentRow[]>(
+            Utilities.SerializedDBQuery(
+                $"SELECT ID, ISNULL(PosNr,'') AS PosNr, Description, UUID FROM Treatment WHERE PraxisID = -1 AND TreatmentTypeID = {treatmentTypeID} AND IsTreatmentActive = 1 ORDER BY PosNr, Description DESC",
+                new List<SqlParameter>())) ?? Array.Empty<TreatmentRow>();
+
+        foreach (var t in restricted)
+            treatmentsRestricted[t.ID] = t;
+
+        var doubles = JsonConvert.DeserializeObject<TreatmentRow[]>(
+            Utilities.SerializedDBQuery(
+                "SELECT ID, ISNULL(PosNr,'') AS PosNr, Description, UUID FROM Treatment WHERE PraxisID = -1 AND TreatmentTypeID IN (7,8) AND IsTreatmentActive = 1 ORDER BY PosNr",
+                new List<SqlParameter>())) ?? Array.Empty<TreatmentRow>();
+
+        foreach (var t in doubles)
+            doubleTreatments[t.ID] = t;
+
+        // Options list for dropdown (restricted + double entries)
+        var opts = new List<KeyValuePair<int, string>>();
+        foreach (var t in treatmentsRestricted.Values.OrderBy(x => x.PosNr).ThenByDescending(x => x.Description))
+            opts.Add(new KeyValuePair<int, string>(t.ID, $"{t.PosNr} {t.Description}"));
+
+        foreach (var t in doubleTreatments.Values.OrderBy(x => x.PosNr))
+            opts.Add(new KeyValuePair<int, string>(t.ID, $"{t.PosNr} {t.Description}"));
+
+        treatmentOptions = opts;
+    }
+
+    // -----------------------------
+    // Populate fields from CSV header
+    // -----------------------------
+    private void PopulateFieldsFromRaw()
+    {
+        // reset selection-ish state
+        selectedRegions = new HashSet<int>();
+        selectedAssociations = new HashSet<int>();
+        mappingRows.Clear();
+
+        // ValidFrom (old: pricelistRawData[0][2] format yyyy-MM-dd)
+        var validFrom = DateTime.ParseExact(SafeCell(0, 2), "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        validFromDateString = validFrom.ToString("yyyy-MM-dd");
+
+        // Regions parsing (old logic)
+        var regionTextA = SafeCell(0, 6);
+        var regionTextB = SafeCell(0, 7);
+
+        if (regionTextA.Contains("West", StringComparison.OrdinalIgnoreCase) && !regionTextA.Contains("Westf", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var id in new[] { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 17, 18 })
+                selectedRegions.Add(id);
+        }
+        else if (regionTextA.Contains("Ost", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var id in new[] { 1, 12, 13, 15, 16 })
+                selectedRegions.Add(id);
+        }
+        else if (ContainsBundesweit(regionTextA) || ContainsBundesweit(regionTextB))
+        {
+            foreach (var r in allRegions.Keys)
+                selectedRegions.Add(r);
+        }
+        else
+        {
+            var mutable = regionTextA;
+
+            if (mutable.Contains("Nordrhein", StringComparison.OrdinalIgnoreCase))
+            {
+                selectedRegions.Add(17);
+                mutable = mutable.Replace("Nordrhein", "", StringComparison.OrdinalIgnoreCase);
+            }
+            if (mutable.Contains("Sachsen-Anhalt", StringComparison.OrdinalIgnoreCase))
+            {
+                selectedRegions.Add(13);
+                mutable = mutable.Replace("Sachsen-Anhalt", "", StringComparison.OrdinalIgnoreCase);
+            }
+            if (mutable.Contains("Rheinland-Pfalz", StringComparison.OrdinalIgnoreCase))
+            {
+                selectedRegions.Add(10);
+                mutable = mutable.Replace("Rheinland-Pfalz", "", StringComparison.OrdinalIgnoreCase);
+            }
+
+            foreach (var entry in allRegions)
+            {
+                if (mutable.Contains(entry.Value, StringComparison.OrdinalIgnoreCase))
+                {
+                    selectedRegions.Add(entry.Key);
+                    mutable = mutable.Replace(entry.Value, "", StringComparison.OrdinalIgnoreCase);
+                }
+            }
+
+            if (selectedRegions.Count == 0 && mutable.Contains("alle", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var r in allRegions.Keys)
+                    selectedRegions.Add(r);
+            }
+        }
+
+        // TreatmentDirectory from CSV (old: pricelistRawData[0][3] = ClassificationCode)
+        var dirCode = SafeCell(0, 3);
+        treatmentDirectoryID = allTreatmentDirectories.FirstOrDefault(x => x.Value.Code == dirCode).Key;
+
+        if (treatmentDirectoryID == 0)
+        {
+            statusMessage = $"Nicht unterstützte TreatmentDirectory: {dirCode}";
+            return;
+        }
+
+        // Associations selection (old: if header[10] empty -> all associations for directory)
+        var assocText = SafeCell(0, 10);
+        if (string.IsNullOrWhiteSpace(assocText))
+        {
+            foreach (var a in allAssociations.Where(x => x.TreatmentDirectoryID == treatmentDirectoryID))
+                selectedAssociations.Add(a.ID);
+        }
+        else
+        {
+            foreach (var a in allAssociations)
+            {
+                if (!string.IsNullOrWhiteSpace(a.Description) && assocText.Contains(a.Description, StringComparison.OrdinalIgnoreCase))
+                    selectedAssociations.Add(a.ID);
+            }
+        }
+
+        // SplittingRule (old: raw[0][9] number -> set radio)
+        var splittingStr = SafeCell(0, 9);
+        if (int.TryParse(splittingStr, out var split))
+        {
+            // old mapping: 3=Prescription, 4=Appointment, 6=Last, 7=First
+            if (split == 4) SetSplitting(SplittingMode.AppointmentDate);
+            else if (split == 6) SetSplitting(SplittingMode.LastAppointment);
+            else if (split == 7) SetSplitting(SplittingMode.FirstAppointment);
+            else SetSplitting(SplittingMode.PrescriptionDate);
+        }
+        else
+        {
+            SetSplitting(SplittingMode.PrescriptionDate);
+        }
+
+        // Blanko detection (old: checks raw[0][4..6])
+        var t4 = SafeCell(0, 4).ToLowerInvariant();
+        var t5 = SafeCell(0, 5).ToLowerInvariant();
+        var t6 = SafeCell(0, 6).ToLowerInvariant();
+        isBlanko = t4.Contains("blanko") || t5.Contains("blanko") || t6.Contains("blanko");
+
+        // Name generation (old logic, max 50)
+        var sb = new StringBuilder();
+        sb.Append(allTreatmentDirectories[treatmentDirectoryID].Description).Append(' ');
+        foreach (var r in selectedRegions.OrderBy(x => x))
+            if (regionAbbreviations.TryGetValue(r, out var ab)) sb.Append(ab).Append(' ');
+
+        foreach (var u in GetUnionsForInsuranceType())
+            if (unionAbbreviations.TryGetValue(u.Key, out var ua)) sb.Append(ua).Append(' ');
+
+        sb.Append(validFrom.ToString("MMM yyyy", CultureInfo.InvariantCulture));
+        priceListName = sb.ToString();
+        if (priceListName.Length > 50) priceListName = priceListName.Substring(0, 50);
+
+        RegenerateMapping();
+    }
+
+    private void PopulatePriceRowsFromRaw()
+    {
+        priceRows.Clear();
+
+        // reset option flags like old InitPLData + auto-detect from file
+        createPLX9932 = false;
+        createPLX9933 = false;
+        createPLX9934 = false;
+        createPLAgeRelevant = false;
+        createPLNumRelevant = false;
+        createPLOrderRelevant = false;
+
+        // raw data rows start at 2 (old)
+        for (int i = 2; i < pricelistRawData.Count; i++)
+        {
+            var row = pricelistRawData[i];
+            if (row.Length != 6) continue;
+
+            var posNr = row[0];
+            var priceText = row[2].Replace('.', ',');
+
+            // Old special cases for Bayern kath. only (region=3)
+            if (posNr == "29933" && selectedRegions.Count == 1 && selectedRegions.Contains(3))
+            {
+                priceRows.Add(new PriceRow { TreatmentID = 56, PriceText = priceText });
+            }
+            else if (posNr == "29934" && selectedRegions.Count == 1 && selectedRegions.Contains(3))
+            {
+                priceRows.Add(new PriceRow { TreatmentID = 58, PriceText = priceText });
+            }
+            else
+            {
+                var tid = GetTreatmentIDByPosNr(posNr);
+                if (tid != -1)
+                {
+                    priceRows.Add(new PriceRow { TreatmentID = tid, PriceText = priceText });
+
+                    // Double treatment (old: if exists and not BG)
+                    var doubleTid = GetDoubleTreatmentIDByPosNr(posNr);
+                    if (doubleTid != -1 && selectedInsuranceTypeId != 6)
+                    {
+                        if (TryParsePrice(row[2], out var p))
+                            priceRows.Add(new PriceRow { TreatmentID = doubleTid, PriceText = (p * 2m).ToString("0.##", CultureInfo.GetCultureInfo("de-DE")) });
+                    }
+                }
+            }
+
+            // Flags 9932/9933/9934
+            if (posNr.Contains("9932")) createPLX9932 = true;
+
+            if (posNr.Contains("9933", StringComparison.OrdinalIgnoreCase))
+            {
+                if (row[3].Contains("pauschal", StringComparison.OrdinalIgnoreCase)
+                    || row[3].Contains("inkl. Wegegeld", StringComparison.OrdinalIgnoreCase)
+                    || row[3].Contains("inkl. Fahrtkosten", StringComparison.OrdinalIgnoreCase))
+                    createPLX9933 = true;
+            }
+
+            if (posNr.Contains("9934", StringComparison.OrdinalIgnoreCase))
+            {
+                if (row[3].Contains("pauschal", StringComparison.OrdinalIgnoreCase)
+                    || row[3].Contains("inkl. Wegegeld", StringComparison.OrdinalIgnoreCase)
+                    || row[3].Contains("inkl. Fahrtkosten", StringComparison.OrdinalIgnoreCase))
+                    createPLX9934 = true;
+            }
+
+            // Social HB detection for Num/Order relevant
+            if (allSocialHomeVisit.Contains(posNr))
+            {
+                if (row[3].Contains("mehrerer", StringComparison.OrdinalIgnoreCase)) createPLNumRelevant = true;
+                if (row[3].Contains("weiterer", StringComparison.OrdinalIgnoreCase)) createPLOrderRelevant = true;
+            }
+        }
+
+        // old rule: multiple patients checked if 9933+9934+9935 but not 9936
+        bool e9933 = false, e9934 = false, e9935 = false, e9936 = false;
+        for (int i = 2; i < pricelistRawData.Count; i++)
+        {
+            var row = pricelistRawData[i];
+            if (row.Length != 6) continue;
+            e9933 |= row[0].Contains("9933");
+            e9934 |= row[0].Contains("9934");
+            e9935 |= row[0].Contains("9935");
+            e9936 |= row[0].Contains("9936");
+        }
+
+        createPLNumRelevant = createPLNumRelevant || (e9933 && e9934 && e9935 && !e9936);
+        createPLAgeRelevant = (e9935 && e9936);
+    }
+
+    // -----------------------------
+    // Mapping generation + LEGS
+    // -----------------------------
+    private void RegenerateMapping()
+    {
+        mappingRows.Clear();
+
+        if (treatmentDirectoryID == 0) return;
+        if (selectedRegions.Count == 0) return;
+        if (selectedAssociations.Count == 0) return;
+
+        var unions = GetUnionsForInsuranceType().Select(x => x.Key).ToList();
+
+        foreach (var r in selectedRegions.OrderBy(x => x))
+        {
+            foreach (var u in unions)
+            {
+                foreach (var a in selectedAssociations.OrderBy(x => x))
+                {
+                    mappingRows.Add(new MappingRow
+                    {
+                        RegionID = r,
+                        InsuranceUnionID = u,
+                        AssociationID = a,
+                        LEGS = GenLEGS(r)
+                    });
+                }
+            }
+        }
+
+        // keep name consistent with root rename behavior
+        if (!string.IsNullOrWhiteSpace(priceListName) && priceListName.Length > 50)
+            priceListName = priceListName.Substring(0, 50);
+    }
+
+    private string GenLEGS(int regionID)
+    {
+        var legsPrefix = allTreatmentDirectories[treatmentDirectoryID].Code;
+
+        // full germany?
+        if (selectedRegions.Count == allRegions.Count)
+            return legsPrefix + "00" + (isBlanko ? "502" : "501");
+
+        // West set (old hard-coded)
+        if (selectedRegions.Count == 13
+            && selectedRegions.Contains(2) && selectedRegions.Contains(3) && selectedRegions.Contains(4)
+            && selectedRegions.Contains(5) && selectedRegions.Contains(6) && selectedRegions.Contains(7)
+            && selectedRegions.Contains(8) && selectedRegions.Contains(9) && selectedRegions.Contains(10)
+            && selectedRegions.Contains(11) && selectedRegions.Contains(14) && selectedRegions.Contains(17)
+            && selectedRegions.Contains(18))
+            return legsPrefix + "24" + (isBlanko ? "502" : "501");
+
+        // Ost set
+        if (selectedRegions.Count == 5
+            && selectedRegions.Contains(1) && selectedRegions.Contains(12) && selectedRegions.Contains(13)
+            && selectedRegions.Contains(15) && selectedRegions.Contains(16))
+            return legsPrefix + "25" + (isBlanko ? "502" : "501");
+
+        // NRW both
+        if (selectedRegions.Count == 2 && selectedRegions.Contains(9) && selectedRegions.Contains(17))
+            return legsPrefix + "08" + (isBlanko ? "502" : "501");
+
+        return legsPrefix + regionTariffCode[regionID] + (isBlanko ? "502" : "501");
+    }
+
+    private void ApplyLegsToAll()
+    {
+        if (string.IsNullOrWhiteSpace(bulkLegs)) return;
+        if (bulkLegs.Length != 7)
+        {
+            _ = jsRuntime.InvokeVoidAsync("alert", "Eine LEGS hat immer 7 Ziffern/Buchstaben.");
+            return;
+        }
+
+        foreach (var m in mappingRows)
+            m.LEGS = bulkLegs;
+
+        bulkLegs = "";
+    }
+
+    // -----------------------------
+    // Save
+    // -----------------------------
+    private async Task SaveToDatabase()
+    {
+        try
+        {
+            var (validFrom, insuranceTypeName) = GetValidFromAndInsuranceName();
+            var priceListGuid = Guid.NewGuid();
+
+            int settings = BuildSettingsBits();
+
+            var cs = ResolveConnectionString();
+
+            using var conn = new SqlConnection(cs);
+            await conn.OpenAsync();
+
+            using var tx = conn.BeginTransaction();
+
+            int priceListID;
+            try
+            {
+                // Insert Pricelist
+                using (var cmd = new SqlCommand(@"
+INSERT INTO Pricelist(Description, ValidFrom, InsuranceTypeID, DateCreated, DateModified, UUID, IsActive, Settings, PraxisID, UserIDModified, DateSync, DeviceIDModified)
+VALUES(@Description, @ValidFrom, @InsuranceTypeID, @DateCreated, @DateCreated, @UUID, 1, @Settings, -1, 999999, @DateCreated, 999999);
+SELECT CAST(SCOPE_IDENTITY() AS INT) AS ID;", conn, tx))
+                {
+                    cmd.Parameters.AddWithValue("@Description", priceListName);
+                    cmd.Parameters.AddWithValue("@ValidFrom", validFrom.Date);
+                    cmd.Parameters.AddWithValue("@InsuranceTypeID", selectedInsuranceTypeId);
+                    cmd.Parameters.AddWithValue("@DateCreated", DateTime.Now);
+                    cmd.Parameters.AddWithValue("@UUID", priceListGuid);
+                    cmd.Parameters.AddWithValue("@Settings", settings);
+
+                    priceListID = (int)(await cmd.ExecuteScalarAsync() ?? 0);
+                    if (priceListID <= 0) throw new Exception("Konnte Pricelist-ID nicht ermitteln.");
+                }
+
+                // Insert PricelistMapper rows
+                using (var cmd = new SqlCommand(@"
+INSERT INTO PricelistMapper(InsuranceUnionID, AssociationID, RegionID, PriceListID, PricelistUUID, DateCreated, DateModified, UUID, UserIDModified, DateSync, DeviceIDModified, LEGS)
+VALUES(@InsuranceUnionID, @AssociationID, @RegionID, @PriceListID, @PricelistUUID, @DateCreated, @DateCreated, NEWID(), 999999, @DateCreated, 999999, @LEGS);", conn, tx))
+                {
+                    cmd.Parameters.Add("@InsuranceUnionID", SqlDbType.Int);
+                    cmd.Parameters.Add("@AssociationID", SqlDbType.Int);
+                    cmd.Parameters.Add("@RegionID", SqlDbType.Int);
+                    cmd.Parameters.Add("@PriceListID", SqlDbType.Int);
+                    cmd.Parameters.Add("@PricelistUUID", SqlDbType.UniqueIdentifier);
+                    cmd.Parameters.Add("@DateCreated", SqlDbType.DateTime);
+                    cmd.Parameters.Add("@LEGS", SqlDbType.VarChar, 7);
+
+                    foreach (var m in mappingRows)
+                    {
+                        cmd.Parameters["@InsuranceUnionID"].Value = m.InsuranceUnionID;
+                        cmd.Parameters["@AssociationID"].Value = m.AssociationID;
+                        cmd.Parameters["@RegionID"].Value = m.RegionID;
+                        cmd.Parameters["@PriceListID"].Value = priceListID;
+                        cmd.Parameters["@PricelistUUID"].Value = priceListGuid;
+                        cmd.Parameters["@DateCreated"].Value = DateTime.Now;
+                        cmd.Parameters["@LEGS"].Value = m.LEGS ?? "";
+
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                }
+
+                // Insert Price rows
+                using (var cmd = new SqlCommand(@"
+INSERT INTO Price(PraxisID, PosNo, Price, PriceListID, PriceListUUID, TreatmentID, TreatmentUUID, VAT, DateCreated, DateModified, UserIDModified, UUID, DateSync, DeviceIDModified)
+VALUES(-1, @PosNo, @Price, @PriceListID, @PriceListUUID, @TreatmentID, @TreatmentUUID, 0, @DateCreated, @DateCreated, 999999, NEWID(), @DateCreated, 999999);", conn, tx))
+                {
+                    cmd.Parameters.Add("@PosNo", SqlDbType.VarChar, 50);
+                    cmd.Parameters.Add("@Price", SqlDbType.Money);
+                    cmd.Parameters.Add("@PriceListID", SqlDbType.Int);
+                    cmd.Parameters.Add("@PriceListUUID", SqlDbType.UniqueIdentifier);
+                    cmd.Parameters.Add("@TreatmentID", SqlDbType.Int);
+                    cmd.Parameters.Add("@TreatmentUUID", SqlDbType.UniqueIdentifier);
+                    cmd.Parameters.Add("@DateCreated", SqlDbType.DateTime);
+
+                    foreach (var p in priceRows)
+                    {
+                        if (p.TreatmentID is null) continue;
+                        if (!TryParsePrice(p.PriceText, out var pr)) continue;
+
+                        var (posNo, tuuid) = GetTreatmentMetaForSave(p.TreatmentID.Value);
+
+                        cmd.Parameters["@PosNo"].Value = posNo;
+                        cmd.Parameters["@Price"].Value = pr;
+                        cmd.Parameters["@PriceListID"].Value = priceListID;
+                        cmd.Parameters["@PriceListUUID"].Value = priceListGuid;
+                        cmd.Parameters["@TreatmentID"].Value = p.TreatmentID.Value;
+                        cmd.Parameters["@TreatmentUUID"].Value = tuuid;
+                        cmd.Parameters["@DateCreated"].Value = DateTime.Now;
+
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                }
+
+                tx.Commit();
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+
+            await jsRuntime.InvokeVoidAsync("alert", "Preisliste wurde gespeichert.");
+            nav.NavigateTo("/General/Pricelists");
+        }
+        catch (Exception ex)
+        {
+            await jsRuntime.InvokeVoidAsync("alert", "Fehler beim Speichern:\n" + ex.Message);
+        }
+    }
+
+    private (DateTime validFrom, string insuranceTypeName) GetValidFromAndInsuranceName()
+    {
+        var validFrom = DateTime.ParseExact(validFromDateString, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var insuranceTypeName = allInsuranceTypes.TryGetValue(selectedInsuranceTypeId, out var n) ? n : "GKV";
+        return (validFrom, insuranceTypeName);
+    }
+
+    private int BuildSettingsBits()
+    {
+        int switchOptions = 0;
+
+        if (createPLX9932) switchOptions |= 1 << 1;
+        if (createPLX9933) switchOptions |= 1 << 2;
+        if (createPLX9934) switchOptions |= 1 << 3;
+        if (createPLAgeRelevant) switchOptions |= 1 << 4;
+
+        if (createPLNumRelevant) switchOptions |= 1 << 5;
+        if (createPLOrderRelevant)
+        {
+            switchOptions |= 1 << 6;
+            switchOptions |= 1 << 5;
+        }
+
+        if (createPLAppointmentDate) switchOptions |= 1 << 7;
+        if (createPLFirstAppointment) switchOptions |= 1 << 0;
+        if (createPLLastAppointment) switchOptions |= 1 << 9;
+        if (isBlanko) switchOptions |= 1 << 10;
+
+        return switchOptions;
+    }
+
+    private (string posNo, Guid uuid) GetTreatmentMetaForSave(int treatmentId)
+    {
+        if (treatmentsRestricted.TryGetValue(treatmentId, out var t1))
+            return (t1.PosNr ?? "", t1.UUID);
+
+        if (doubleTreatments.TryGetValue(treatmentId, out var t2))
+            return (t2.PosNr ?? "", t2.UUID);
+
+        throw new Exception($"TreatmentID nicht gefunden: {treatmentId}");
+    }
+
+    private bool CanSave()
+    {
+        if (!importReady) return false;
+        if (mappingRows.Count == 0) return false;
+        if (priceRows.Count < 3) return false;
+        if (string.IsNullOrWhiteSpace(priceListName)) return false;
+        if (mappingRows.Any(x => string.IsNullOrWhiteSpace(x.LEGS) || x.LEGS.Length != 7)) return false;
+        if (!DateTime.TryParseExact(validFromDateString, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _)) return false;
+        return true;
+    }
+
+    private async Task WarnIfPricelistMappingExists()
+    {
+        try
+        {
+            if (selectedRegions.Count == 0 || selectedAssociations.Count == 0) return;
+
+            // unions from insurance type
+            var unionIds = GetUnionsForInsuranceType().Select(x => x.Key).ToList();
+            if (unionIds.Count == 0) return;
+
+            var validFrom = DateTime.ParseExact(validFromDateString, "yyyy-MM-dd", CultureInfo.InvariantCulture).Date;
+
+            string inUnions = string.Join(",", unionIds);
+            string inAssoc = string.Join(",", selectedAssociations);
+            string inRegions = string.Join(",", selectedRegions);
+
+            var json = Utilities.SerializedDBQuery($@"
+SELECT COUNT(*) AS Cnt
+FROM Pricelist a, PriceListMapper b
+WHERE a.ValidFrom = @ValidFrom
+  AND a.ID = b.PriceListID
+  AND b.InsuranceUnionID IN ({inUnions})
+  AND b.AssociationID IN ({inAssoc})
+  AND b.RegionID IN ({inRegions})",
+                new List<SqlParameter> { new("@ValidFrom", validFrom) });
+
+            var cntObj = JsonConvert.DeserializeObject<CountRow[]>(json)?.FirstOrDefault();
+            if (cntObj is not null && cntObj.Cnt > 0)
+            {
+                await jsRuntime.InvokeVoidAsync("alert", "Achtung: Eine Preisliste mit identischem Mapping existiert schon!");
+            }
+        }
+        catch
+        {
+            // same spirit as old: don't block import due to warning check
+        }
+    }
+
+    public class CountRow { public int Cnt { get; set; } }
+
+    // -----------------------------
+    // UI handlers
+    // -----------------------------
+    private void ResetAll()
+    {
+        ResetImportOnly();
+        selectedFile = null;
+        selectedFileName = null;
+        fileChosen = false;
+        statusMessage = "";
+        importReady = false;
+    }
+
+    private void ResetImportOnly()
+    {
+        importReady = false;
+        showNewTreatmentsModal = false;
+        newTreatmentsText = "";
+
+        pricelistRawData.Clear();
+        mappingRows.Clear();
+        priceRows.Clear();
+
+        treatmentDirectoryID = 0;
+        selectedRegions.Clear();
+        selectedAssociations.Clear();
+
+        validFromDateString = DateTime.Today.ToString("yyyy-MM-dd");
+        priceListName = "";
+        bulkLegs = "";
+        isBlanko = false;
+
+        createPLPrescriptionDate = true;
+        createPLAppointmentDate = false;
+        createPLFirstAppointment = false;
+        createPLLastAppointment = false;
+
+        createPLX9932 = false;
+        createPLX9933 = false;
+        createPLX9934 = false;
+
+        createPLAgeRelevant = false;
+        createPLNumRelevant = false;
+        createPLOrderRelevant = false;
+    }
+
+    private void AddEmptyPriceRow() => priceRows.Add(new PriceRow());
+
+    private void RemovePriceRow(PriceRow r) => priceRows.Remove(r);
+
+    private void RemoveMappingRow(MappingRow m) => mappingRows.Remove(m);
+
+    private void OnNameChanged()
+    {
+        if (priceListName.Length > 50) priceListName = priceListName.Substring(0, 50);
+    }
+
+    private void ToggleRegion(int id, bool on)
+    {
+        if (on) selectedRegions.Add(id);
+        else selectedRegions.Remove(id);
+        RegenerateMapping();
+    }
+
+    private void ToggleAssociation(int id, bool on)
+    {
+        if (on) selectedAssociations.Add(id);
+        else selectedAssociations.Remove(id);
+        RegenerateMapping();
+    }
+
+    private void OnInsuranceTypeChanged(ChangeEventArgs e)
+    {
+        // keep selectedInsuranceTypeId already bound; rebuild mapping + treatments + price mapping
+        if (!importReady && pricelistRawData.Count == 0) return;
+        LoadTreatmentsForInsuranceType();
+        RegenerateMapping();
+        PopulatePriceRowsFromRaw();
+    }
+
+    private void SetSplitting(SplittingMode mode)
+    {
+        createPLPrescriptionDate = mode == SplittingMode.PrescriptionDate;
+        createPLAppointmentDate = mode == SplittingMode.AppointmentDate;
+        createPLFirstAppointment = mode == SplittingMode.FirstAppointment;
+        createPLLastAppointment = mode == SplittingMode.LastAppointment;
+    }
+
+    private void OnNumRelevantChanged(ChangeEventArgs e)
+    {
+        var on = (bool)e.Value!;
+        createPLNumRelevant = on;
+        if (on) createPLOrderRelevant = false;
+    }
+
+    private void OnOrderRelevantChanged(ChangeEventArgs e)
+    {
+        var on = (bool)e.Value!;
+        createPLOrderRelevant = on;
+        if (on) createPLNumRelevant = false;
+    }
+
+    // -----------------------------
+    // Helpers (ported from old)
+    // -----------------------------
+    public static string[] SplitCSV(string input)
+    {
+        Regex csvSplit = new Regex("(?:^|,)(\"(?:[^\"]+|\"\")*\"|[^,]*)", RegexOptions.Compiled);
+        List<string> list = new List<string>();
+        string curr;
+        foreach (Match match in csvSplit.Matches(input))
+        {
+            curr = match.Value;
+            if (0 == curr.Length)
+            {
+                list.Add("");
+            }
+            list.Add(curr.TrimStart(',').Replace("\"", ""));
+        }
+        return list.ToArray();
+    }
+
+    private string SafeCell(int row, int col)
+    {
+        if (row < 0 || row >= pricelistRawData.Count) return "";
+        if (col < 0 || col >= pricelistRawData[row].Length) return "";
+        return pricelistRawData[row][col] ?? "";
+    }
+
+    private bool ContainsBundesweit(string s)
+    {
+        var x = (s ?? "").ToLowerInvariant();
+        return x.Contains("allen bundesländern") || x.Contains("bundesweit");
+    }
+
+    private string GetInsuranceTypeKey(List<string[]> raw)
+    {
+        string[] textsToSearch =
+        {
+            SafeRaw(raw, 0, 4).ToLowerInvariant(),
+            SafeRaw(raw, 0, 5).ToLowerInvariant(),
+            SafeRaw(raw, 0, 6).ToLowerInvariant()
+        };
+
+        foreach (var text in textsToSearch)
+        {
+            foreach (var syn in synonymInsuranceType.Keys)
+                if (text.Contains(syn)) return synonymInsuranceType[syn];
+        }
+        return "";
+    }
+
+    private string SafeRaw(List<string[]> raw, int r, int c)
+    {
+        if (r < 0 || r >= raw.Count) return "";
+        if (c < 0 || c >= raw[r].Length) return "";
+        return raw[r][c] ?? "";
+    }
+
+    private List<string> GetNewTreatmentsList(List<string[]> raw)
+    {
+        var newTreatments = new List<string>();
+        for (int i = 2; i < raw.Count; i++)
+        {
+            var row = raw[i];
+            if (row.Length != 6) continue;
+            if (!allTreatments.Contains(row[0]))
+                newTreatments.Add(row[0] + " " + row[3]);
+        }
+        return newTreatments;
+    }
+
+    private int GetTreatmentIDByPosNr(string posNr)
+    {
+        foreach (var kv in treatmentsRestricted)
+            if (string.Equals(kv.Value.PosNr, posNr, StringComparison.OrdinalIgnoreCase))
+                return kv.Key;
+        return -1;
+    }
+
+    private int GetDoubleTreatmentIDByPosNr(string posNr)
+    {
+        foreach (var kv in doubleTreatments)
+            if (string.Equals(kv.Value.PosNr, posNr, StringComparison.OrdinalIgnoreCase))
+                return kv.Key;
+        return -1;
+    }
+
+    private bool TryParsePrice(string raw, out decimal price)
+    {
+        // old: decimal.Parse(value.Replace(",", "."), InvariantCulture)
+        var s = (raw ?? "").Trim().Replace(",", "."); // allow both
+        return decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out price);
+    }
+
+    private IEnumerable<AssociationRow> GetAssociationsForCurrentDirectory()
+        => allAssociations.Where(x => x.TreatmentDirectoryID == treatmentDirectoryID).OrderBy(x => x.Description);
+
+    private List<KeyValuePair<int, string>> GetUnionsForInsuranceType()
+    {
+        var name = allInsuranceTypes.TryGetValue(selectedInsuranceTypeId, out var n) ? n : "GKV";
+        return allInsuranceTypesUnions.TryGetValue(name, out var list) ? list : new();
+    }
+
+    private string GetRegionName(int id) => allRegions.TryGetValue(id, out var n) ? n : id.ToString();
+
+    private string GetUnionName(int id)
+        => allInsuranceUnions.TryGetValue(id, out var n) ? n : (unionAbbreviations.TryGetValue(id, out var ab) ? ab : id.ToString());
+
+    private string GetAssociationName(int id)
+        => allAssociations.FirstOrDefault(x => x.ID == id)?.Description ?? id.ToString();
+
+    private string ResolveConnectionString()
+    {
+        // 1) Try Utilities.GetIpraxDbConnectionString() if it exists
+        try
+        {
+            var m = typeof(Utilities).GetMethod("GetIpraxDbConnectionString", BindingFlags.Public | BindingFlags.Static);
+            if (m is not null)
+            {
+                var v = m.Invoke(null, null)?.ToString();
+                if (!string.IsNullOrWhiteSpace(v)) return v!;
+            }
+        }
+        catch { /* ignore */ }
+
+        // 2) Try common config keys
+        foreach (var key in new[] { "iPraxDb", "IpraxDb", "DefaultConnection" })
+        {
+            var v = config.GetConnectionString(key);
+            if (!string.IsNullOrWhiteSpace(v)) return v!;
+        }
+
+        throw new InvalidOperationException("Keine ConnectionString gefunden. Bitte appsettings ConnectionStrings prüfen (z.B. 'DefaultConnection').");
+    }
+}
