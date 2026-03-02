@@ -1,0 +1,2375 @@
+@page "/General/CreatePraxis"
+
+@inject AuthenticationStateProvider authenticationStateProvider;
+@inject IDbContextFactory<TriggerFriendlyIpraxDbContext> iPraxContextFactory;
+@inject IDbContextFactory<TriggerFriendlyIpraxKundenportalDbContext> iPraxKundenportalContextFactory;
+
+@inject IJSRuntime jsRuntime;
+@inject NavigationManager navigationManager;
+@inject ILogger<CreatePraxis> logger;
+@inject IConfiguration config;
+
+@using static SharedData.Enums;
+@using static Webinator.Data.Tables;
+@using static Webinator.Data.ValidationModels;
+@using SharedData.BillingSql;
+@using static Utils.Utils;
+@using CollmexUtils
+@using KeeperUtils
+@using KeeperSecurity.Configuration
+@using Microsoft.Extensions.Logging
+@using System.IO
+
+<div class="unified-margin-top-main-view" style="height: 100%; display: flex; justify-content: center;">
+    @if (userClaimsPrincipal!.IsInRole("Vertrieb") || userClaimsPrincipal.IsInRole("Admin"))
+    {
+        if (show_form || (praxisCreationFailure && !partialCreationFailure))
+        {
+            <EditForm style="height: 100%;" EditContext="@createPraxisContext">
+                <DataAnnotationsValidator />
+                <div class="w3-card-4 iprax-card-border-radius" style="margin-top: 0px; margin-bottom: 100px; display: table; padding: 10px; float: none; position: relative; margin-left: auto; margin-right: auto; width: 80%; max-width: 1050px;">
+                    <div style="white-space: nowrap; width: 100%; display: flex; align-items: center; border-bottom: 1px solid lightgray; padding-bottom: 20px;">
+                        <div style="font-size: 30px; width: fit-content;">
+                            Neue Praxis
+                        </div>
+                        <div style="white-space: nowrap; width: 100%; justify-content: end; display: flex;">
+                            <button style="bottom: 13px; right: 13px;" disabled="@isPraxisCreationRunning" @onclick="(() => navigationManager.NavigateTo(navigationManager.BaseUri))" type="button" class="button-abort">Abbrechen</button>
+                            @if (creationButtonDisabled || (partialCreationFailure && !praxisCreationFailure))
+                            {
+                                <button style="opacity: 0.5; cursor:not-allowed;" disabled="disabled" class="button-accept">Praxis erstellen</button>
+                            }
+                            else
+                            {
+                                <button style="bottom: 13px; right: 13px;" id="submitButton" disabled="@isPraxisCreationRunning" type="button" class="button-accept" @onclick="CheckFaultyEntriesOrShowConfirmation">Praxis erstellen</button>
+                            }
+                        </div>
+                    </div>
+                    <div style="margin-top: 8px;">
+                        <table style="width: 100%; min-width: 1100px;">
+                            <tbody>
+                                <tr>
+                                    <td style="vertical-align: top;">
+                                        <table class="praxis-creation-table">
+                                            <tbody>
+                                                <tr>
+                                                    <td class="praxis-creation-table-headline" colspan="2">
+                                                        Kontaktdaten
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td colspan="2">
+                                                        <InputText class="iprax-account-input form-select-praxis-creation text-align-left" type="text" @bind-Value="createPraxisModel!.InputPraxisname" placeholder="Praxis-Firmenname" autocomplete="off" />
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td colspan="2">
+                                                        <InputText class="iprax-account-input form-select-praxis-creation text-align-left" type="text" @bind-Value="createPraxisModel!.Department" placeholder="Praxis-Abteilung" autocomplete="off" />
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="padding-right: 10px">
+                                                        <InputText class="iprax-account-input form-select-praxis-creation text-align-left" type="text" @bind-Value="createPraxisModel!.InputFirstName" placeholder="Vorname" autocomplete="off" />
+                                                    </td>
+                                                    <td style="padding-left: 10px">
+                                                        <InputText class="iprax-account-input form-select-praxis-creation text-align-left" type="text" @bind-Value="createPraxisModel!.InputLastName" placeholder="Nachname" autocomplete="off" />
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td colspan="2">
+                                                        <InputText class="iprax-account-input form-select-praxis-creation text-align-left" type="text" @bind-Value="createPraxisModel!.InputAddress" placeholder="Straße" autocomplete="off" />
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="padding-right: 10px">
+                                                        <InputText class="iprax-account-input form-select-praxis-creation praxis-creation-plz text-align-left" type="text" @bind-Value="createPraxisModel!.InputPlz" placeholder="PLZ" autocomplete="off" />
+                                                    </td>
+                                                    <td style="padding-left: 10px">
+                                                        <InputText class="iprax-account-input form-select-praxis-creation text-align-left" type="text" @bind-Value="createPraxisModel!.InputCity" placeholder="Ort" autocomplete="off" />
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td colspan="2">
+                                                        <InputSelect class="form-select form-select-praxis-creation iprax-account-input" @bind-Value="createPraxisModel!.InputRegion">
+                                                            <option value="" disabled selected hidden>Bundesland</option>
+                                                            @foreach (var region in regionTable!)
+                                                            {
+                                                                <option value="@region.ID">@region.Description</option>
+                                                            }
+                                                        </InputSelect>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td colspan="2">
+                                                        <InputText class="iprax-account-input form-select-praxis-creation text-align-left" style="width:100%;" type="text" @bind-Value="createPraxisModel!.InputPhone" placeholder="Telefonnummer" autocomplete="off" />
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td colspan="2">
+                                                        <InputText class="iprax-account-input form-select-praxis-creation text-align-left" style="width:100%;" type="text" @bind-Value="createPraxisModel!.InputMobile" placeholder="Handynummer" autocomplete="off" />
+                                                    </td>
+                                                </tr>
+
+                                                <tr>
+                                                    <td colspan="2">
+                                                        <InputText class="iprax-account-input form-select-praxis-creation text-align-left" style="width:100%;" type="text" @bind-Value="createPraxisModel!.InputMail" placeholder="E-Mail-Adresse" autocomplete="off" />
+                                                    </td>
+                                                </tr>
+                                            <tr>
+                                                <td colspan="2">
+                                                    <InputText class="iprax-account-input form-select-praxis-creation text-align-left" style="width:100%;" type="text" @bind-Value="createPraxisModel!.InputIban" placeholder="IBAN" autocomplete="off"/>
+                                                    @if (!createPraxisContext!.IsValid(() => createPraxisModel!.InputIban!))
+                                                    {
+                                                    <div class="popup" style="position: relative"> 
+                                                        <div class="popuptext" style="position: absolute; box-shadow: 0px 0px 3px 1px Rgba(0.2,0.2,0.2,0.3); border-radius: 6px; top: -35px; background-color: white; left: 452px; height: fit-content; z-index: 1; width: fit-content;">
+                                                            <div style=" font-size: 15px; white-space: nowrap; margin: 5px 0; text-align: left; padding-left: 8px; padding-right: 8px;">
+                                                                <ValidationMessage For="() => createPraxisModel!.InputIban" ></ValidationMessage>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    }
+                                                </td>
+                                            </tr>
+                                                @if (userClaimsPrincipal.IsInRole("Admin"))
+                                                {
+                                                    <tr>
+                                                        <td colspan="2">
+                                                            <div style="width: 100%; display: flex; align-items: center;">
+                                                                <div style="width: 70%;">
+                                                                    Test-Praxis (Keine Collmex-Anbindung)
+                                                                </div>
+                                                                <div style="text-align: start; height: 35px; width: 30%">
+                                                                    <div style="display: flex; height: 100%; align-items: center; justify-content: end;">
+                                                                        <label class="switch">
+                                                                            <InputCheckbox class="invisible" type="checkbox" @bind-Value="isTestPraxis" />
+                                                                            <span class="slider"></span>
+                                                                        </label>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                                <tr>
+                                                    <td class="praxis-creation-table-headline" colspan="2" style="padding-top: 20px;">
+                                                        Institutionskennzeichen
+                                                    </td>
+                                                </tr>
+
+                                                <tr>
+                                                    <td style="vertical-align: middle">
+                                                        Physiotherapie:
+                                                    </td>
+                                                    <td>
+                                                        <div style="display: flex; align-items: center;">
+                                                            <InputNumber class="iprax-account-input form-select-praxis-creation spinners-removed" @bind-Value:get="createPraxisModel!.NumPhysio" @bind-Value:set="(e => {createPraxisModel!.NumPhysio = e > 0 ? e : 0; UpdateInstitutions(1); })" type="number" min="0" autocomplete="off" />
+                                                            <div class="symbol-simple" @onclick="(() => ShowInstitutionEditDialog(1))">@symbolEdit</div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+
+                                                <tr>
+                                                    <td style="vertical-align: middle">
+                                                        Ergotherapie:
+                                                    </td>
+                                                    <td>
+                                                        <div style="display: flex; align-items: center;">
+                                                            <InputNumber class="iprax-account-input form-select-praxis-creation spinners-removed" @bind-Value:get="createPraxisModel!.NumErgo" @bind-Value:set="(e => {createPraxisModel!.NumErgo = e > 0 ? e : 0; UpdateInstitutions(2);})" type="number" min="0" autocomplete="off" />
+                                                            <div class="symbol-simple" @onclick="(() => ShowInstitutionEditDialog(2))">@symbolEdit</div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="vertical-align: middle">Logopädie:</td>
+                                                    <td>
+                                                        <div style="display: flex; align-items: center;">
+                                                            <InputNumber class="iprax-account-input form-select-praxis-creation spinners-removed" @bind-Value:get="createPraxisModel!.NumLogo" @bind-Value:set="(e => {createPraxisModel!.NumLogo = e > 0 ? e : 0; UpdateInstitutions(3);})" type="number" min="0" autocomplete="off" />
+                                                            <div class="symbol-simple" @onclick="(() => ShowInstitutionEditDialog(3))">@symbolEdit</div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="vertical-align: middle">Podologie:</td>
+                                                    <td>
+                                                        <div style="display: flex; align-items: center;">
+                                                            <InputNumber class="iprax-account-input form-select-praxis-creation spinners-removed" @bind-Value:get="createPraxisModel!.NumPodo" @bind-Value:set="(e => {createPraxisModel!.NumPodo = e > 0 ? e : 0; UpdateInstitutions(5); })" type="number" min="0" autocomplete="off" />
+                                                            <div class="symbol-simple" @onclick="(() => ShowInstitutionEditDialog(5))">@symbolEdit</div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="vertical-align: middle">Heilpraktiker:</td>
+                                                    <td>
+                                                        <div style="display: flex; align-items: center;">
+                                                            <InputNumber class="iprax-account-input form-select-praxis-creation spinners-removed" @bind-Value:get="createPraxisModel!.NumHeil" @bind-Value:set="(e => {createPraxisModel!.NumHeil = e > 0 ? e : 0; UpdateInstitutions(4); })" type="number" min="0" autocomplete="off" />
+                                                            <div class="symbol-simple" @onclick="(() => ShowInstitutionEditDialog(4))">@symbolEdit</div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </td>
+                                    <td style="vertical-align: top; justify-content: end; display: flex;">
+                                        <table class="praxis-creation-table" style="width: 500px;">
+                                            <tbody>
+                                                <tr>
+                                                    <td class="praxis-creation-table-headline" style="padding-bottom: 8px;" colspan="2">
+                                                        Praxiseinstellungen
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="min-width: 200px;">
+                                                        Spaltenanzahl:
+                                                    </td>
+                                                    @if (createPraxisModel!.isIpraxCash)
+                                                    {
+                                                        <td>
+                                                            <label style="height:35px; margin-top: 1px; padding-top:5px;">1</label>
+                                                        </td>
+                                                    }
+                                                    else
+                                                    {
+                                                        <td>
+                                                            <InputNumber class="iprax-account-input form-select-praxis-creation spinners-removed" type="number" @bind-Value:get="createPraxisModel!.NumTherapists" @bind-Value:set="(e => {createPraxisModel!.NumTherapists = e > 0 ? e : 1; UpdateTherapists();})" min="1" />
+                                                        </td>
+                                                        <td>
+                                                            <div class="symbol-simple" @onclick="(() => showTherapistEditDialog = true)">
+                                                                @symbolEdit
+                                                            </div>
+                                                        </td>
+                                                    }
+                                                </tr>
+                                                <tr>
+                                                    <td>
+                                                        Raster:
+                                                    </td>
+                                                    <td>
+                                                        <InputSelect class="form-select form-select-praxis-creation iprax-account-input" @bind-Value="createPraxisModel!.InputFrequency">
+                                                            <option value="-1" disabled selected hidden>Raster</option>
+                                                            <option value="5">5</option>
+                                                            <option value="10">10</option>
+                                                            <option value="15">15</option>
+                                                            <option value="20">20</option>
+                                                            <option value="25">25</option>
+                                                            <option value="30">30</option>
+                                                        </InputSelect>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td>
+                                                        Abrechnung:
+                                                    </td>
+                                                    <td>
+                                                        <InputSelect class="form-select form-select-praxis-creation iprax-account-input" @bind-Value="createPraxisModel!.CashSettingInt">
+                                                            <option value="-1" disabled selected hidden>Abrechnung</option>
+                                                            <option value="0">Cash Basic</option>
+                                                            <option value="1">Cash Complete (srzh)</option>
+                                                            <option value="2">Cash Direct</option>
+                                                            <option value="5">Cash Flex (rfhm)</option>
+                                                        </InputSelect>
+                                                    </td>
+                                                </tr>
+                                                @if (createPraxisModel!.CashSettingInt == 2)
+                                                {
+                                                    <tr>
+                                                        <td style="padding-top: 15px;">
+                                                            Mtl. Kosten:
+                                                        </td>
+                                                        <td>
+                                                            <div style="text-align: start; height: 35px;">
+                                                                <InputNumber class="form-select-praxis-creation iprax-account-input spinners-removed" style=" text-align: right; width: 130px !important;" type="number" @bind-Value="createPraxisModel!.CashDirectPriceMonthly" min="0" autocomplete="off" />
+                                                                <label>€</label>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                                else if (createPraxisModel!.CashSettingInt == 5)
+                                                {
+                                                    <tr>
+                                                        <td style="padding-top: 15px;">
+                                                            iPrax Cash:
+                                                        </td>
+                                                        <td>
+                                                            <div style="text-align: start; height: 35px;">
+                                                                <div style="padding-top: 10px; display: flex">
+                                                                    <label class="switch">
+                                                                        <InputCheckbox class="invisible" type="checkbox" @bind-Value="createPraxisModel!.isIpraxCash" @oninput="(() => CheckResetInputs())"/>
+                                                                        <span class="slider"></span>
+                                                                    </label>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                                else
+                                                {
+                                                    <tr style="height: 45.5px;">
+                                                        <td style="padding-top: 15px;">
+                                                        </td>
+                                                        <td>
+                                                            <div style="text-align: start; height: 35px;"></div>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                                <tr>
+                                                    <td class="praxis-creation-table-headline" colspan="2" style="white-space: nowrap; padding-top: 20px;">
+                                                        Zusätzliche Funktionen
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td>
+                                                        Foto/Video:
+                                                    </td>
+                                                    @if (createPraxisModel!.isIpraxCash)
+                                                    {
+                                                        <td>
+                                                            <label style="height:35px; margin-top: 1px; padding-top:5px;">deaktiviert</label>
+                                                        </td>
+                                                    }
+                                                    else
+                                                    {
+                                                        <td>
+                                                            <div style="height: 35px; display: flex; align-items: center;">
+                                                                <div style="width: fit-content; text-align: right; align-items: center; display: flex; justify-content: end">
+                                                                    <label class="switch" style="margin-left: auto;">
+                                                                        <InputCheckbox class="invisible" type="checkbox" @bind-Value="createPraxisModel!.FotoVideoActive" />
+                                                                        <span class="slider"></span>
+                                                                    </label>
+                                                                </div>
+                                                                <div style="width: 100%; text-align: right; width: 260px; display: flex; align-items: center; justify-content: end;">
+                                                                    @if (createPraxisModel!.FotoVideoActive)
+                                                                    {
+                                                                        <label style="margin-left: 15px; width: 80px; white-space: nowrap;">Mtl. Kosten:</label>
+                                                                        <InputNumber class="form-select-praxis-creation iprax-account-input form-select-praxis-creation spinners-removed" style="margin-left: 15px; width: 130px;" type="number" @bind-Value="createPraxisModel!.FotoVideoPriceStandard" min="0" autocomplete="off" />
+                                                                        <label>&nbsp;€</label>
+                                                                    }
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                    }
+                                                </tr>
+                                                <tr>
+                                                    <td style="height: 35px;">
+                                                        Kassenbuch:
+                                                    </td>
+                                                    @if (createPraxisModel!.isIpraxCash)
+                                                    {
+                                                        <td>
+                                                            <label style="height:35px; margin-top: 2px; padding-top:5px;">deaktiviert</label>
+                                                        </td>
+                                                    }
+                                                    else
+                                                    {
+                                                        <td>
+                                                            <div style="height: 35px; display: flex; align-items: center;">
+                                                                <div style="text-align: right; align-items: center; display: flex;" justify-content:end>
+                                                                    <label class="switch" style="margin-left: auto;">
+                                                                        <InputCheckbox class="invisible" type="checkbox" @bind-Value="createPraxisModel!.TseCashBookActive" />
+                                                                        <span class="slider"></span>
+                                                                    </label>
+                                                                </div>
+                                                                <div style="width: 100%; text-align: right; width: 260px; display: flex; align-items: center; justify-content: end;">
+                                                                    @if (createPraxisModel!.TseCashBookActive)
+                                                                    {
+                                                                        <label style="margin-left: 15px; white-space: nowrap;">Mtl. Kosten:</label>
+                                                                        <InputNumber class="form-select-praxis-creation iprax-account-input form-select-praxis-creation spinners-removed" style="margin-left: 15px; width: 130px;" type="number" @bind-Value="createPraxisModel!.CashBookPriceStandard" min="0" autocomplete="off" />
+                                                                        <label>&nbsp;€</label>
+                                                                    }
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                    }
+                                                </tr>
+                                                <tr>
+                                                    <td class="praxis-creation-table-headline" colspan="2" style="padding-top: 20px">
+                                                        Lizenz und Geräte
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td>Lizenz:</td>
+                                                    @if (createPraxisModel!.isIpraxCash)
+                                                    {
+                                                        <td>iPrax One</td>
+                                                    }
+                                                    else
+                                                    {
+                                                        <td>@Utilities.GetLicenseText(devicesWithExtras.Count())</td>
+                                                    }
+                                                </tr>
+                                                <tr>
+                                                    <td style="white-space: nowrap;">
+                                                        Mtl. Kosten:
+                                                    </td>
+                                                    @if (createPraxisModel!.isIpraxCash)
+                                                    {
+                                                        <td>
+                                                            <label style="height:35px; margin-top: 2px; padding-top:5px;">0</label>
+                                                            <label>€</label>
+                                                        </td>
+                                                    }
+                                                    else
+                                                    {
+                                                        <td>
+                                                            <InputNumber class="form-select-praxis-creation iprax-account-input spinners-removed" style="width: 130px;" type="number" @bind-Value="createPraxisModel!.IpraxMonthlyFeeSpecialPrice" min="0" autocomplete="off" />
+                                                            <label>€</label>
+                                                        </td>
+                                                    }
+                                                </tr>
+                                                <tr>
+                                                    <td>
+                                                        Geräte:
+                                                    </td>
+                                                    @if (createPraxisModel!.isIpraxCash)
+                                                    {
+                                                        <td>
+                                                            <label style="height:35px; width: 340px; margin-top: 2px; padding-top:5px;">1</label>
+                                                        </td>
+                                                    }
+                                                    else
+                                                    {
+                                                        <td>
+                                                            <div style="display: flex; align-items: center;">
+                                                                <InputNumber class="form-select-praxis-creation iprax-account-input spinners-removed" type="number" @bind-Value:get="createPraxisModel!.NumDevices" @bind-Value:set="(e => {createPraxisModel!.NumDevices = e > 0 ? e : 1; UpdateDevices();})" min="1" oninvalid="setCustomValidity('Es muss mindestens 1 Gerät angelegt werden.')" oninput="setCustomValidity('')"/>
+                                                            </div>
+                                                        </td>
+                                                        <td>
+                                                            <div class="symbol-simple" @onclick="(() => showDeviceEditDialog = true)">
+                                                                @symbolEdit
+                                                            </div>
+                                                        </td>
+                                                    }
+                                                </tr>
+                                                <tr>
+                                                    <td class="praxis-creation-table-headline" colspan="2" style="padding-top: 20px">
+                                                        Rabatt und Zahlungsinformationen
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td>Unterschrift (SEPA):</td>
+                                                    <td>
+                                                        <InputDate class="iprax-account-input form-select-praxis-creation praxis-creation-plz text-align-left" @bind-Value="createPraxisModel!.InputSignatureDateCustomer" autocomplete="off" />
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td>Zahlbar innerhalb von:</td>
+                                                    <td>
+                                                        <InputSelect class="form-select form-select-praxis-creation iprax-account-input" @bind-Value="createPraxisModel!.inputPaymentCondition">
+                                                            <option value="@CollmexUtils.Enums.Zahlungsbedingung.Tage14OhneAbzug">14 Tage ohne Abzug</option>
+                                                            <option value="@CollmexUtils.Enums.Zahlungsbedingung.Tage30OhneAbzug">30 Tage ohne Abzug</option>
+                                                            <option value="@CollmexUtils.Enums.Zahlungsbedingung.Tage60OhneAbzug">60 Tage ohne Abzug</option>
+                                                        </InputSelect>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td>
+                                                        Rabatt:
+                                                    </td>
+                                                    @if (createPraxisModel!.isIpraxCash)
+                                                    {
+                                                        <td>
+                                                            <label style="height:35px; margin-top: 2px; padding-top:5px;">0</label>
+                                                            <label>€</label>
+                                                        </td>
+                                                    }
+                                                    else
+                                                    {
+                                                        <td>
+                                                            <InputNumber class="form-select-praxis-creation iprax-account-input form-select-praxis-creation spinners-removed" style="width: 130px; text-align: right;" min="0" @bind-Value="createPraxisModel!.Discount" />
+                                                            <label>€</label>
+                                                        </td>
+                                                    }
+                                                </tr>
+                                                <tr>
+                                                    <td style="white-space:nowrap;">
+                                                        Vertragsbeginn:
+                                                    </td>
+                                                    <td style="padding-bottom: 10px;">
+                                                        <div style="display: flex; justify-content: space-around;">
+                                                            <InputDate class="iprax-account-input form-select-praxis-creation praxis-creation-plz text-align-left" @bind-Value="createPraxisModel!.StartOfContract" autocomplete="off" />
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </EditForm>
+        }
+        else
+        {
+            <div class="show_data" style="height: fit-content; padding: 20px; border-radius: 7px; box-shadow: 0 0 3px 1px rgba(0.2,0.2,0.2,0.3);">
+                <div class="modal-popup-header-container">
+                    <div class="modal-popup-header">Praxis erstellt</div>
+                    <div class="modal-popup-btn-container" style="align-items: center;">
+                        <button @onclick="(() => ForceReloadCreatePraxisWithCheck(createPraxisModel!.NewPraxisID))" style="width: 110px; min-width: unset;" class="button-accept">Fertig</button>
+                    </div>
+                </div>
+                <hr/>
+                @if (!sendSuccessful)
+                {
+                    <p style="color: red; font-weight: bold">Achtung E-Mail mit dem CryptionKey konnte nicht verschickt werden oder Einpflegen in Keeper fehlgeschlagen!<br/> Bitte unbedingt notieren! Fehler beim Einpflegen in Keeper: @keeperError</p>
+                    <div class="w3-panel w3-pale-yellow w3-leftbar w3-border-red">
+                        <p>Nach Verlassen dieser Seite ist der CryptionKey unwiderruflich verloren, falls nicht andernorts notiert!</p>
+                    </div>
+                    <p style="color: red">Bitte den CryptionKey sichern und das Boss-Passwort notieren!</p>
+                    <p style="color: red">
+                        <input id="gelesen" type="checkbox" @bind-value="@cryptionKeySavedManually"/>
+                        <label for="gelesen">Ich habe den CryptionKey gesichert</label>
+                    </p>
+                }
+
+                <table class="w3-table" style="width: unset; margin: 0;box-shadow: unset;">
+                    @if (!sendSuccessful)
+                    {
+                        <tr>
+                            <td class="datatable" style="padding-left: unset;">CryptionKey</td>
+                            <td class="datatable">@CryptionKey</td>
+                            <td class="datatable">
+                                <button class="link-lookalike-button" onclick="copyTextToClipboard('@CryptionKey'); return false;">Kopieren</button>
+                            </td>
+                        </tr>
+                    }
+
+                    <tr>
+                        <td class="datatable" style="padding-left: unset;">Zugangsdaten:</td>
+                        <td></td>
+                        <td class="datatable">
+                            <button id="btnPDF" class="link-lookalike-button" @onclick="DownloadPdfForNewPraxis">Herunterladen</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="datatable" style="padding-left: unset;">PraxisID:</td>
+                        <td class="datatable">@createPraxisModel!.NewPraxisID</td>
+                        <td class="datatable">
+                            <button class="link-lookalike-button" onclick="copyTextToClipboard('@createPraxisModel!.NewPraxisID'); return false;">Kopieren</button>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th class="datatable" style="padding-left: unset;">Boss-Passwort</th>
+                        <td class="datatable">@bossPW</td>
+                        <td class="datatable">
+                            <button class="link-lookalike-button" onclick="copyTextToClipboard('@bossPW'); return false;">Kopieren</button>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        }
+    }
+</div>
+
+@if (showTherapistEditDialog)
+{
+    <Webinator.Pages.General.CreatePraxisTherapistEditDialog CloseTherapistInfoDialog="(() => showTherapistEditDialog = false)"
+                                                                  AddTherapistWithExtras="(() => { createPraxisModel!.NumTherapists++; UpdateTherapists(); })"
+                                                                  RemoveTherapist="((e) => { therapistsWithExtras.Remove(e); SetTherapistColumnIds(); createPraxisModel!.NumTherapists--; })"
+                                                                  GetIncludedTherapistCount="GetIncludedTherapistCount"
+                                                                  TherapistsWithExtras="therapistsWithExtras"/>
+}
+
+@if (showDeviceEditDialog)
+{
+    <Webinator.Pages.General.CreatePraxisDeviceEditDialog CloseDeviceInfoDialog="(() => showDeviceEditDialog = false)"
+                                                               AddDeviceWithExtras="(() => { createPraxisModel!.NumDevices++; UpdateDevices(); })"
+                                                               CheckDeviceIncluded="IsDeviceIncluded"
+                                                               DeviceInfosWithExtras="devicesWithExtras"
+                                                               RemoveDevice="((e) => { devicesWithExtras.Remove(e); createPraxisModel!.NumDevices--; })"/>
+}
+
+@if (showInstitutionInfoEditDialog)
+{
+    <Webinator.Pages.General.CreatePraxisIkEditDialog CloseInstitutionInfoDialog="(() => showInstitutionInfoEditDialog = false)"
+                                                           InstitutionTypeName="@currentInstitutionName"
+                                                           InstitutionType="currentInstitutionEditType"
+                                                           InstitutionInfosWithExtras="currentInstitutionInfosWithExtras"
+                                                           RemoveInstitution="RemoveInstitutionWithExtras"
+                                                           AddInstitutionWithExtras="AddInstitutionWithExtras"/>
+}
+
+@if (showPraxisCreationConfirmation)
+{
+    <CreatePraxisConfirmation ChangeSettingConfirmation="OnSubmitCreatePraxis"
+                              CloseConfirmationDialog="(() => { creationButtonDisabled = false; isPraxisCreationRunning = false; showPraxisCreationConfirmation = false; StateHasChanged(); })"
+                              IncludedTherapistCount="@(GetIncludedTherapistCount())"
+                              CreatePraxisModel="createPraxisModel"
+                              DevicesWithExtras="devicesWithExtras"
+                              ErgosWithExtras="ergosWithExtras"
+                              HeilsWithExtras="heilsWithExtras"
+                              LogosWithExtras="logosWithExtras"
+                              PhysiosWithExtras="physiosWithExtras"
+                              PodosWithExtras="podosWithExtras"
+                              TherapistsWithExtras="therapistsWithExtras"
+                              BillingPrices="billingPrices!"
+                              IsTestPraxis="isTestPraxis"/>
+}
+
+@if (loadingPdf || isPraxisCreationRunning)
+{
+    <Webinator.Pages.Templates.LoadingPopup/>
+}
+
+@if (showErrorPopup)
+{
+    <Webinator.Pages.Templates.ErrorPopup CloseDialog="(() => { showErrorPopup = false; isPraxisCreationRunning = false; StateHasChanged(); })"
+                                               ErrorMessage="@errorMessage"/>
+}
+
+
+@code {
+    private System.Security.Claims.ClaimsPrincipal? userClaimsPrincipal;
+
+    private CreatePraxisModel? createPraxisModel;
+    private EditContext? createPraxisContext;
+    private string? CryptionKey;
+    private string? bossPW;
+    private bool sendSuccessful;
+    private string? praxisNameKeeper;
+    private string? keeperError;
+
+    private UnsyncedPraxisSetting? unsyncedPraxisSetting;
+    private BillingPrice[]? billingPrices;
+
+    private MarkupString symbolEdit;
+    private bool showErrorPopup;
+    private string? errorMessage;
+
+    private bool showTherapistEditDialog;
+    private bool showDeviceEditDialog;
+    private bool showInstitutionInfoEditDialog;
+    private bool isPraxisCreationRunning;
+    private bool creationButtonDisabled;
+    private bool praxisCreationFailure;
+    private bool partialCreationFailure;
+    private bool loadingPdf;
+    private bool showPraxisCreationConfirmation;
+    private bool isTestPraxis;
+    private bool cryptionKeySavedManually;
+    private bool _createKeeperEntries = true;
+    
+    private List<TherapistWithExtras> therapistsWithExtras = new();
+    private List<DeviceWithExtras> devicesWithExtras = new();
+
+    private List<InstitutionInfoWithExtras> physiosWithExtras = new();
+    private List<InstitutionInfoWithExtras> ergosWithExtras = new();
+    private List<InstitutionInfoWithExtras> logosWithExtras = new();
+    private List<InstitutionInfoWithExtras> podosWithExtras = new();
+    private List<InstitutionInfoWithExtras> heilsWithExtras = new();
+
+    private List<InstitutionInfoWithExtras> currentInstitutionInfosWithExtras = new();
+
+    private Region[]? regionTable;
+
+    private string? currentInstitutionName;
+    private int currentInstitutionEditType;
+
+    private int _dayDeadline;
+    private CurrentServer currentServer = GetCurrentServerByIP();
+
+    private DateTime _oneTimeInvoiceStart;
+    private DateTime _periodicInvoiceStart;
+    
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        userClaimsPrincipal = authenticationStateProvider.GetAuthenticationStateAsync().Result.User;
+
+        if (Utils.Utils.GetCurrentServerByIP() != CurrentServer.Live)
+        {
+            IConfigurationSection? section = config.GetSection("AddKeeperKeysOnTestServer");
+
+            if (section.Exists())
+            {
+                _createKeeperEntries = section.Get<string>() == "1";
+            }
+        }
+        
+        show_form = true;
+        StateHasChanged();
+
+        symbolEdit = Utilities.GetStylableSVG(Directory.GetCurrentDirectory() + "/wwwroot/img/edit.svg");
+    }
+
+    private bool show_form = false;
+    private bool descriptionNeedsInstitution = true;
+
+    protected override void OnParametersSet()
+    {
+        createPraxisModel = new();
+        createPraxisContext = new(createPraxisModel);
+        
+        createPraxisModel!.NumDevices = 1;
+        createPraxisModel!.CashSettingInt = 0;
+        
+        _dayDeadline = int.Parse(config["BillingTargetDeadlineDay"]!);
+        billingPrices = JsonConvert.DeserializeObject<BillingPrice[]>(BillingSqlRead.BillingPrice_LoadAll(Startup.StaticConfig!["ConnectionStrings:Secret_iPraxKundenportalEntities"]!))!;
+
+        var efContext = iPraxContextFactory.CreateDbContext();
+
+        regionTable = efContext.Region.OrderBy(x => x.Description).ToArray();
+
+        createPraxisModel!.InputSignatureDateCustomer = DateTime.Today;
+        
+        DateTime minimumInvoiceDate = Utilities.GetMinimumUploadDateForPeriodicInvoices(null, config);
+        DateTime serverDate = Utilities.GetServerDateTime(Utilities.GetConnectionStringIprax());
+        createPraxisModel!.StartOfContract = DateTime.Today;
+        
+        SetupBillingPrices();
+
+#if DEBUG
+        SetUpFakePraxisData();
+#endif
+
+        UpdateTherapists();
+        UpdateDevices();
+
+        base.OnParametersSet();
+    }
+
+    private void SetUpFakePraxisData()
+    {
+        createPraxisModel!.InputPraxisname = "Thomas Test";
+        createPraxisModel!.InputFirstName = "Thomas";
+        createPraxisModel!.InputLastName = "Thomas";
+        createPraxisModel!.InputAddress = "Thomas Home";
+        createPraxisModel!.InputPlz = "82166";
+        createPraxisModel!.InputCity = "Gräfelfing";
+        createPraxisModel!.InputRegion = "3";
+        createPraxisModel!.InputFrequency = 5;
+        createPraxisModel!.InputMail = "t.mattusch@iprax-systems.com";
+        createPraxisModel!.CashSettingInt = 0;
+        createPraxisModel!.NumDevices = 1;
+        createPraxisModel!.InputSignatureDateCustomer = DateTime.Today;
+        UpdateDevices();
+        createPraxisModel!.InputIban = "";
+    }
+
+    private void SetupBillingPrices()
+    {
+        using var context = iPraxKundenportalContextFactory.CreateDbContext();
+
+        DateTime serverDateTime = context.BillingPrices.Select(x => DateTime.Now).First();
+
+        createPraxisModel!.CashBookPriceStandard = Utilities.GetBillingPrice(billingPrices!, SharedData.Enums.BillingTypeEnum.CashbookMonthlyActivated);
+        createPraxisModel!.FotoVideoPriceStandard = Utilities.GetBillingPrice(billingPrices!, SharedData.Enums.BillingTypeEnum.FotoVideoActivate);
+
+        createPraxisModel!.InstitutionInfoPriceNewMaxIk = Utilities.GetBillingPrice(billingPrices!, SharedData.Enums.BillingTypeEnum.NewMaxIk);
+        createPraxisModel!.InstitutionInfoPriceMonthlyStandard = Utilities.GetBillingPrice(billingPrices!, SharedData.Enums.BillingTypeEnum.IPraxGroup);
+        createPraxisModel!.CashDirectPriceMonthly = Utilities.GetBillingPrice(billingPrices!, SharedData.Enums.BillingTypeEnum.CashDirectMonthlyActivated);
+        createPraxisModel!.IpraxMonthly = Utilities.GetBillingPrice(billingPrices!, SharedData.Enums.BillingTypeEnum.IPraxMonthly);
+
+        createPraxisModel!.IpraxMonthlyFeeSpecialPrice = Utilities.GetBillingPrice(billingPrices!, SharedData.Enums.BillingTypeEnum.IPraxMonthly);
+    }
+
+    private void CheckFaultyEntriesOrShowConfirmation()
+    {
+        if (!createPraxisContext!.Validate())
+        {
+            isPraxisCreationRunning = false; 
+            creationButtonDisabled = false; 
+            StateHasChanged();
+            return;
+        }
+        
+        if ((createPraxisModel!.NumPhysio + createPraxisModel!.NumPodo + createPraxisModel!.NumErgo + createPraxisModel!.NumLogo + createPraxisModel!.NumHeil) < 1)
+        {
+            jsRuntime.InvokeVoidAsync("showCustomError", "Es muss mindestens ein Insitutionskennzeichen existieren.");
+            creationButtonDisabled = false;
+            isPraxisCreationRunning = false;
+            return;
+        }
+        
+        if ((DateTime)createPraxisModel!.InputSignatureDateCustomer! > createPraxisModel!.StartOfContract)
+        {
+            errorMessage = "Der Vertragsbeginn darf nicht vor dem Datum der Kundenunterschrift (SEPA) liegen.";
+            showErrorPopup = true;
+            return;
+        }
+        
+        DateTime today = DateTime.Today;
+        if (createPraxisModel!.StartOfContract < new DateTime(today.Year, today.Month, 01))
+        {
+            errorMessage = "Der Vertragsbeginn liegt zu weit in der Vergangenheit.";
+            showErrorPopup = true;
+            return; 
+        }
+        
+        creationButtonDisabled = true;
+        showPraxisCreationConfirmation = true;
+        StateHasChanged();
+    }
+
+    private int GetIkCountExcludingHeilpaktiker()
+    {
+        return createPraxisModel!.NumPhysio + createPraxisModel!.NumPodo + createPraxisModel!.NumErgo + createPraxisModel!.NumLogo;
+    }
+
+    private async void OnSubmitCreatePraxis()
+    {
+        if (!isPraxisCreationRunning)
+        {
+            isPraxisCreationRunning = true;
+            praxisCreationFailure = false;
+            loadingPdf = true;
+            StateHasChanged();
+
+            _oneTimeInvoiceStart = (DateTime)createPraxisModel!.StartOfContract!;
+            _periodicInvoiceStart = Utilities.GetPeriodicInvoiceUploadTargetDate((DateTime)createPraxisModel!.StartOfContract, null, config);
+            
+            try
+            {    
+                SetBossPassword();
+                await CreatePractice();
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.Message;
+                showErrorPopup = true;
+                StateHasChanged();
+
+                return;
+            }
+
+            try
+            {
+                // Do not change the order of the following operations. The Errormessages depend on knowing in which order DbEntries are created
+                CreateAddresses();
+                CreateInstitutions(!createPraxisModel!.isIpraxCash && !isTestPraxis);
+                await UpdateKeeperTitleIfExists(_createKeeperEntries);
+                CreateDevices(!createPraxisModel!.isIpraxCash && !isTestPraxis);
+                CreateTherapists();
+                CreateUsers();
+
+                try
+                {
+                    using TriggerFriendlyIpraxKundenportalDbContext iPraxKundenportalContext = iPraxKundenportalContextFactory.CreateDbContext();
+                    iPraxKundenportalContext.Update(unsyncedPraxisSetting!);
+                    iPraxKundenportalContext.SaveChanges();
+                }
+                catch (Exception ex)
+                {
+                    partialCreationFailure = true;
+                    logger.LogError(ex, ex.Message);
+                    errorMessage = "MaxDeviceCount und MaxIkCount konnten in UnsyncedPraxisSetting nicht gespeichert werden. Die Werte müssen manuell nachgetragen werden.";
+                    showErrorPopup = true;
+                }
+
+                try
+                {
+                    /*
+                    if (Startup.StaticConfig["MailSettings:SendInvitationMail"] == "1")
+                    {
+                        Utilities.SendIpraxDeskInvitation(createPraxisModel!.newPraxisID, createPraxisModel!.CustomerNo, navigationManager.BaseUri, iPraxKundenportalContextFactory.CreateDbContext(), logger);
+                    }
+                */
+                }
+                catch (Exception ex)
+                {
+                    errorMessage = "Die Einladung zum Kundenportal wurde nicht versendet.";
+                    showErrorPopup = true;
+                    logger.LogError(ex, ex.Message);
+                }
+                
+                show_form = false;
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.Message;
+                showErrorPopup = true;
+                show_form = false;
+                logger.LogError(ex, $"Failed to create Addresses, Devices, Institutions and Therapists for Praxis {createPraxisModel!.NewPraxisID}.");
+            }
+            finally
+            {
+                isPraxisCreationRunning = false;
+                showPraxisCreationConfirmation = false;
+                loadingPdf = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private void SetBossPassword()
+    {
+        string word_list = File.ReadAllText("Resources/words.txt");
+        string[] lines = word_list.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+        Random rnd = new Random();
+        bossPW = lines[rnd.Next(lines.Count())];
+    }
+
+    private async Task CreatePractice()
+    {
+        using TriggerFriendlyIpraxDbContext iPraxDbContext = iPraxContextFactory.CreateDbContext();
+
+        Praxis praxis = new Praxis();
+
+        try
+        {
+            CryptionKey = Utilities.GenCryptionKey(16);
+
+            int maxCustomerNo = iPraxDbContext.Praxis.AsNoTracking().Max(x => x.CustomerNo!.Value);
+            praxis.CustomerNo = maxCustomerNo + 1;
+
+            createPraxisModel!.CustomerNo = praxis.CustomerNo.Value;
+            praxis.DateCreated = DateTime.Now;
+            praxis.UUID = Guid.NewGuid();
+
+            praxis.Fontsize = 10;
+            praxis.Fonttype = "HelveticaNeue";
+            praxis.MarginTop = 0;
+            praxis.MarginBottom = 0;
+            praxis.MarginLeft = 1.5;
+            praxis.MarginRight = 1.5;
+
+            string strKto = string.Empty;
+            string strBLZ = string.Empty;
+            string strBankname = string.Empty;
+
+            praxis.Signature = "Zahlbar sofort ohne Abzug auf das Konto " + strKto + " BLZ " + strBLZ + " bei der " + strBankname;
+            praxis.SignatureAdmonition = praxis.Signature;
+            praxis.SignaturePrivate = praxis.Signature;
+            praxis.SignatureSelfPay = praxis.Signature;
+
+            praxis.PassiveTime = 0;
+
+            praxis.SwitchOptions = 2097231;
+            praxis.SwitchOptions |= 33554432;
+            
+            praxis.CustomerNo = createPraxisModel!.CustomerNo;
+            praxis.UstID = Cryption.EncryptString("", CryptionKey!);
+            praxis.IBAN = Cryption.EncryptString("", CryptionKey!);
+
+            praxis.Name = Cryption.EncryptString(createPraxisModel!.InputPraxisname ?? "", CryptionKey!);
+            praxis.OwnerName = Cryption.EncryptString(createPraxisModel!.InputFirstName + " " + createPraxisModel!.InputLastName, CryptionKey!);
+            praxis.MinutesPerSegment = (int)createPraxisModel!.InputFrequency!;
+
+            if (praxis.MinutesPerSegment != 25)
+            {
+                praxis.CalendarStart = new DateTime(1970, 1, 1, 6, 0, 0);
+                praxis.CalendarEnd = new DateTime(1970, 1, 1, 22, 0, 0);
+            }
+            else
+            {
+                praxis.CalendarStart = new DateTime(1970, 1, 1, 6, 20, 0);
+                praxis.CalendarEnd = new DateTime(1970, 1, 1, 22, 35, 0);
+            }
+
+            praxis.IsActive = 1;
+            praxis.PraxisFee = 10;
+            praxis.PrescriptionFee = 10;
+            praxis.PercentColorSwitch = 50;
+            praxis.CancelPeriod = 24;
+            praxis.CancelFee = 0;
+            praxis.Attributes = createPraxisModel!.isIpraxCash ? @"{ ""isIpraxCash"": ""True""}" : @"{ ""isIpraxCash"": ""False""}";
+            praxis.DateModified = DateTime.Now;
+            praxis.UserIDModified = 999999;
+            praxis.DeviceIDModified = 999999;
+            praxis.DateSync = DateTime.Now;
+
+            iPraxDbContext.Add(praxis);
+            iPraxDbContext.SaveChanges();
+
+            createPraxisModel!.NewPraxisID = praxis.ID;
+            
+            await CreateKeeperData(_createKeeperEntries);
+
+            if (!isTestPraxis)
+            {
+                List<CollmexRequests.CollmexBase> collmexResponse = await Utilities.CreateCollmexCustomer(praxis.CustomerNo.ToString(),
+                    Utilities.GetCollmexFirmaNr(), 
+                    createPraxisModel!.InputPraxisname,
+                    createPraxisModel!.Department,
+                    createPraxisModel!.InputFirstName, 
+                    createPraxisModel!.InputLastName, 
+                    createPraxisModel!.InputPlz!, 
+                    createPraxisModel!.InputCity, 
+                    createPraxisModel!.InputAddress, 
+                    (createPraxisModel!.InputIban ?? "").Replace(" ", "").Replace("-", ""), 
+                    createPraxisModel!.InputPhone, 
+                    createPraxisModel!.InputMobile, 
+                    createPraxisModel!.InputMail, 
+                    createPraxisModel!.InputSignatureDateCustomer, 
+                    bemerkung: createPraxisModel!.isIpraxCash ? "iPrax Cash" : "");
+            }
+        }
+        catch (Exception contextIpraxEx)
+        {
+            praxisCreationFailure = true;
+            creationButtonDisabled = false;
+
+            logger.LogError(contextIpraxEx, "Creating new Praxis failed.  \n\n" + contextIpraxEx.Message);
+            throw new Exception("Die Praxis konnte nicht erstellt werden.");
+        }
+
+        try
+        {
+            using TriggerFriendlyIpraxKundenportalDbContext iPraxKundenportalContext = iPraxKundenportalContextFactory.CreateDbContext();
+
+            BillingTypeEnum praxisLicence = BillingTypeEnum.IPraxOne;
+
+            var user = authenticationStateProvider.GetAuthenticationStateAsync().Result.User.Identity!.Name;
+
+            if (createPraxisModel!.NumDevices >= 2)
+            {
+                praxisLicence = BillingTypeEnum.IPraxTeam;
+            }
+
+            if (!createPraxisModel!.isIpraxCash && !isTestPraxis)
+            {
+                iPraxKundenportalContext.PendingBillingChanges.Add(GetPendingBillingChanges(user!, Utilities.GetBillingPrice(billingPrices!, praxisLicence), praxisLicence, (int)createPraxisModel!.inputPaymentCondition, praxis.UUID, praxis.GetType().Name, _oneTimeInvoiceStart));
+                iPraxKundenportalContext.PendingBillingChanges.Add(GetPendingBillingChanges(user!, createPraxisModel!.IpraxMonthlyFeeSpecialPrice, BillingTypeEnum.IPraxMonthly, -1, praxis.UUID, praxis.GetType().Name, _periodicInvoiceStart));
+            }
+
+            string? invitationMail = createPraxisModel!.InputMail;
+
+            if (GetCurrentServerByIP() != CurrentServer.Live && !(createPraxisModel!.InputMail ?? "").EndsWith("@iprax-systems.com"))
+            {
+                invitationMail = Startup.StaticConfig!["MailSettings:DevMail"]!;
+                await jsRuntime.InvokeVoidAsync("showCustomInformation", "In der Testumgebung dürfen E-Mails nur an Adressen mit der Endung @iprax-systems.com gesendet werden. Die gespeicherte E-Mail wurde automatisch auf devteam@iprax-systems.com gesetzt.");
+            }
+
+            unsyncedPraxisSetting = new UnsyncedPraxisSetting()
+            {
+                PraxisID = createPraxisModel!.NewPraxisID,
+                PaymentCondition = (int)createPraxisModel!.inputPaymentCondition,
+                MaxDeviceCount = 0,
+                MaxIKCount = 0,
+                FreeIKCount = GetFreeIkCount(),
+                FreeTherapistCount = therapistsWithExtras.Count(x => x.IsFree),
+                CashDirectActivated = 0,
+                IsTestPraxis = isTestPraxis ? 1 : 0,
+                InvitationMailAddress = invitationMail!,
+                StartOfContract = createPraxisModel!.StartOfContract,
+                DateCreated = DateTime.Now,
+                DateModified = DateTime.Now
+            };
+
+            if (createPraxisModel!.Discount > 0 && !createPraxisModel!.isIpraxCash && !isTestPraxis)
+            {
+                iPraxKundenportalContext.PendingBillingChanges.Add(GetPendingBillingChanges(user!, createPraxisModel!.Discount, BillingTypeEnum.Discount, (int)createPraxisModel!.inputPaymentCondition, praxis.UUID, praxis.GetType().Name, _oneTimeInvoiceStart));
+            }
+
+            iPraxKundenportalContext.UnsyncedPraxisSettings.Add(unsyncedPraxisSetting);
+            iPraxKundenportalContext.SaveChanges();
+        }
+        catch (Exception iPraxKundenportalContextEx)
+        {
+            partialCreationFailure = true;
+            loadingPdf = false;
+            isPraxisCreationRunning = false;
+            logger.LogError(iPraxKundenportalContextEx, "Creating PendingBillingChanges and UnsyncedPraxisSettings failed. \n\n" + iPraxKundenportalContextEx.Message);
+            throw new Exception($"Die Praxis {createPraxisModel!.NewPraxisID} wurde angelegt, aber es wurden keine Instutitionen, Treatments, Prices, Settings, Geräte oder Spalten angelegt. Außerdem konnten die Einträge für PendingBillingChanges und UnsyncedPraxisSettings nicht erstellt werden.");
+        }
+
+        try
+        {
+            //Mahngebuehr - 1
+            Treatment treatment = new Treatment();
+            treatment.DateCreated = DateTime.Now;
+            treatment.DateModified = DateTime.Now;
+            treatment.DateSync = DateTime.Now;
+            treatment.Description = "Mahngebühr";
+            treatment.DeviceIDModified = 999999;
+            treatment.IsAktivPassiv = false;
+            treatment.IsGroupTreatment = false;
+            treatment.IsTreatmentActive = false;
+            treatment.PosNr = "";
+            treatment.PraxisID = createPraxisModel!.NewPraxisID;
+            treatment.TreatmentCode = "Mahngeb. 1";
+            treatment.TreatmentGroupID = 55;
+            treatment.TreatmentTypeID = 2;
+            treatment.UserIDModified = 999999;
+            treatment.UUID = Guid.NewGuid();
+            iPraxDbContext.Add(treatment);
+            iPraxDbContext.SaveChanges();
+
+            Price price = new Price();
+            price.DateCreated = DateTime.Now;
+            price.DateModified = DateTime.Now;
+            price.DateSync = DateTime.Now;
+            price.PosNo = "";
+            price.PraxisID = createPraxisModel!.NewPraxisID;
+            price.Price1 = 5;
+            price.PriceListID = 37;
+            price.PriceListUUID = new Guid("F2D13238-97B1-4C04-85DC-6C2AF3E8CFF5");
+            price.UserIDModified = 999999;
+            price.UUID = Guid.NewGuid();
+            price.DeviceIDModified = 999999;
+            price.VAT = 0;
+            price.TreatmentUUID = treatment.UUID;
+            price.TreatmentID = treatment.ID;
+
+            iPraxDbContext.Add(price);
+            iPraxDbContext.SaveChanges();
+
+            //Mahngebuehr - 2
+            Treatment treatment2 = new Treatment();
+            treatment2.DateCreated = DateTime.Now;
+            treatment2.DateModified = DateTime.Now;
+            treatment2.DateSync = DateTime.Now;
+            treatment2.Description = "Mahngebühr";
+            treatment2.DeviceIDModified = 999999;
+            treatment2.IsAktivPassiv = false;
+            treatment2.IsGroupTreatment = false;
+            treatment2.IsTreatmentActive = false;
+            treatment2.PosNr = "";
+            treatment2.PraxisID = createPraxisModel!.NewPraxisID;
+            treatment2.TreatmentCode = "Mahngeb. 2";
+            treatment2.TreatmentGroupID = 56;
+            treatment2.TreatmentTypeID = 2;
+            treatment2.UserIDModified = 999999;
+            treatment2.UUID = Guid.NewGuid();
+            iPraxDbContext.Add(treatment2);
+            iPraxDbContext.SaveChanges();
+
+            Price price2 = new Price();
+            price2.DateCreated = DateTime.Now;
+            price2.DateModified = DateTime.Now;
+            price2.DateSync = DateTime.Now;
+            price2.PosNo = "";
+            price2.PraxisID = createPraxisModel!.NewPraxisID;
+            price2.Price1 = 10;
+            price2.PriceListID = 37;
+            price2.PriceListUUID = new Guid("F2D13238-97B1-4C04-85DC-6C2AF3E8CFF5");
+            price2.UserIDModified = 999999;
+            price2.UUID = Guid.NewGuid();
+            price2.DeviceIDModified = 999999;
+            price2.VAT = 0;
+            price2.TreatmentUUID = treatment2.UUID;
+            price2.TreatmentID = treatment2.ID;
+            iPraxDbContext.Add(price2);
+            iPraxDbContext.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            partialCreationFailure = true;
+            logger.LogError(ex, $"Fehler beim Anlegen der Treatments und Preise für Praxis {createPraxisModel!.NewPraxisID}." + ex.Message);
+            throw new Exception($"Fehler beim Anlegen der Treatments und Preise für Praxis {createPraxisModel!.NewPraxisID}. Die Praxis wurder erstellt aber die Adressen, Institutionen, Geräte, Spalten und User konnten nicht angelegt werden.");
+        }
+
+        Settings settingsMedia = new Settings();
+        Settings settingsTseCashbookActive = new Settings();
+        Settings settingsCash = new Settings();
+
+        try
+        {
+            settingsMedia.DateCreated = DateTime.Now;
+            settingsMedia.PraxisID = createPraxisModel!.NewPraxisID;
+            settingsMedia.Type = Convert.ToInt32(Webinator.Data.SettingsType.fotoVideo);
+            settingsMedia.ValueType = 1; //0 = text, 1 = integer
+            settingsMedia.DeviceID = -1;
+            settingsMedia.UserID = -1;
+
+            settingsMedia.UUID = Guid.NewGuid();
+
+            settingsMedia.Value = createPraxisModel!.FotoVideoActive && !createPraxisModel!.isIpraxCash ? "3" : "0";
+            settingsMedia.DateModified = DateTime.Now;
+            settingsMedia.DateSync = DateTime.Now;
+            settingsMedia.DeviceIDModified = 999999;
+            settingsMedia.UserIDModified = 999999;
+
+            // NOTE -> Possible Settings:
+            // Deaktiviert = 0
+            // Foto = 1
+            // Video = 2
+            // Foto&Video = 3
+            iPraxDbContext.Add(settingsMedia);
+
+            settingsCash.DateCreated = DateTime.Now;
+            settingsCash.PraxisID = createPraxisModel!.NewPraxisID;
+            settingsCash.Type = Convert.ToInt32(Webinator.Data.SettingsType.accountingType);
+            settingsCash.ValueType = 1; //0 = text, 1 = integer
+            settingsCash.DeviceID = -1;
+            settingsCash.UserID = -1;
+
+            settingsCash.UUID = Guid.NewGuid();
+
+            int cashSettingValue = createPraxisModel!.CashSettingInt == (int)CashSetting.RFHM_Flex ? (int)CashSetting.Basic : createPraxisModel.CashSettingInt;
+           
+            settingsCash.Value = cashSettingValue + "";
+            settingsCash.DateModified = DateTime.Now;
+            settingsCash.DateSync = DateTime.Now;
+            settingsCash.DeviceIDModified = 999999;
+            settingsCash.UserIDModified = 999999;
+
+            iPraxDbContext.Add(settingsCash);
+
+            if (currentServer == CurrentServer.Live && new string[] { "3", "4", "5" }.Contains(settingsCash.Value))
+            {
+                Utilities.SendRFHMCryptionKeyMail(Convert.ToInt32(settingsCash.PraxisID));
+            }
+
+            if (createPraxisModel!.CashSettingInt == (int)CashSetting.RFHM_Flex)
+            {
+                Settings cashFlexPaymentPeriod = new Settings();
+                cashFlexPaymentPeriod.DateCreated = DateTime.Now;
+                cashFlexPaymentPeriod.PraxisID = createPraxisModel!.NewPraxisID;
+                cashFlexPaymentPeriod.Type = (int)Webinator.Data.SettingsType.cashFlexPaymentPeriod;
+                cashFlexPaymentPeriod.ValueType = (int)Webinator.Data.ValueType.Int;
+                cashFlexPaymentPeriod.Value = Convert.ToString(15);
+                cashFlexPaymentPeriod.DeviceID = -1;
+                cashFlexPaymentPeriod.UserID = -1;
+                cashFlexPaymentPeriod.UUID = Guid.NewGuid();
+
+                cashFlexPaymentPeriod.DateModified = DateTime.Now;
+                cashFlexPaymentPeriod.DateSync = DateTime.Now;
+                cashFlexPaymentPeriod.DeviceIDModified = 999999;
+                cashFlexPaymentPeriod.UserIDModified = 999999;
+
+                iPraxDbContext.Add(cashFlexPaymentPeriod);
+            }
+
+            settingsTseCashbookActive.DateCreated = DateTime.Now;
+            settingsTseCashbookActive.PraxisID = createPraxisModel!.NewPraxisID;
+            settingsTseCashbookActive.Type = (int)Webinator.Data.SettingsType.tseCashbookActive;
+            settingsTseCashbookActive.ValueType = (int)Webinator.Data.ValueType.Int;
+            settingsTseCashbookActive.Value = createPraxisModel!.TseCashBookActive && !createPraxisModel!.isIpraxCash ? "1" : "0";
+            settingsTseCashbookActive.DeviceID = -1;
+            settingsTseCashbookActive.UserID = -1;
+            settingsTseCashbookActive.UUID = Guid.NewGuid();
+
+            settingsTseCashbookActive.DateModified = DateTime.Now;
+            settingsTseCashbookActive.DateSync = DateTime.Now;
+            settingsTseCashbookActive.DeviceIDModified = 999999;
+            settingsTseCashbookActive.UserIDModified = 999999;
+
+            iPraxDbContext.Add(settingsTseCashbookActive);
+            iPraxDbContext.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            partialCreationFailure = true;
+            logger.LogError(ex, $"Fehler beim Anlegen der Settings für Praxis {createPraxisModel!.NewPraxisID}." + ex.Message);
+            throw new Exception($"Fehler beim Anlegen der Settings für Praxis {createPraxisModel!.NewPraxisID}. Die Praxis wurder erstellt aber die Settings, Adressen, Institutionen, Geräte, Spalten und User konnten nicht angelegt werden. ");
+        }
+
+        try
+        {
+            if (!isTestPraxis && !createPraxisModel!.isIpraxCash)
+            {
+                string user = authenticationStateProvider.GetAuthenticationStateAsync().Result.User.Identity!.Name!;
+
+                using TriggerFriendlyIpraxKundenportalDbContext iPraxKundenportalContext = iPraxKundenportalContextFactory.CreateDbContext();
+
+                if (createPraxisModel!.FotoVideoActive)
+                {
+                    iPraxKundenportalContext.PendingBillingChanges.Add(GetPendingBillingChanges(user, createPraxisModel!.FotoVideoPriceStandard, BillingTypeEnum.FotoVideoActivate, -1, settingsMedia.UUID, settingsMedia.GetType().Name, _periodicInvoiceStart));
+                }
+
+                if (createPraxisModel!.TseCashBookActive)
+                {
+                    iPraxKundenportalContext.PendingBillingChanges.Add(GetPendingBillingChanges(user, createPraxisModel!.CashBookPriceStandard, BillingTypeEnum.CashbookMonthlyActivated, -1, settingsTseCashbookActive.UUID, settingsTseCashbookActive.GetType().Name, _periodicInvoiceStart));
+                }
+
+                if (createPraxisModel!.CashSettingInt == 2)
+                {
+                    iPraxKundenportalContext.PendingBillingChanges.Add(GetPendingBillingChanges(user, 0, BillingTypeEnum.CashDirect, (int)createPraxisModel!.inputPaymentCondition, settingsCash.UUID, settingsCash.GetType().Name, _oneTimeInvoiceStart));
+                    iPraxKundenportalContext.PendingBillingChanges.Add(GetPendingBillingChanges(user, createPraxisModel!.CashDirectPriceMonthly, BillingTypeEnum.CashDirectMonthlyActivated, -1, settingsCash.UUID, settingsCash.GetType().Name, _periodicInvoiceStart));
+                }
+                else
+                {
+                    iPraxKundenportalContext.PendingBillingChanges.Add(GetPendingBillingChanges(user, 0m, Utilities.GetBillingTypeFromCashSetting(createPraxisModel!.CashSettingInt), (int)createPraxisModel!.inputPaymentCondition, settingsCash.UUID, settingsCash.GetType().Name, _oneTimeInvoiceStart));
+                }
+
+                iPraxKundenportalContext.SaveChanges();
+            }
+        }
+        catch (Exception iPraxKundenportalContextEx)
+        {
+            logger.LogError(iPraxKundenportalContextEx, "Creating PendingBillingChanges and UnsyncedPraxisSettings failed. \n\n" + iPraxKundenportalContextEx.Message);
+            throw new Exception($"Praxis {createPraxisModel!.NewPraxisID}. Die PendingBillingChanges für die Settings Foto/Video und Cashbook wurden nicht erstellt. Außerdem konnten keine Adressen, Geräte, Institutionen und Spalten angelegt werden.");
+        }
+
+        try
+        {
+            DateTime serverDateTime = iPraxDbContext.Device.AsNoTracking().Select(x => DateTime.Now).First();
+
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 4, -1, "SYNC4 PRAXIS GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 5, -1, "SYNC5 USER GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 15, -1, "SYNC15 THERAPIST - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 20, -1, "SYNC20 APPOINTMENT - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 21, -1, "SYNC21 GADGET - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 22, -1, "SYNC22 PATIENT - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 23, -1, "SYNC23 TEXTBLOCK - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 28, -1, "SYNC28 NOTES - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 29, -1, "SYNC29 RESTHOME - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 31, -1, "SYNC31 INVOICE - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 59, -1, "SYNC59 TREATMENTROOM - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 63, -1, "SYNC63 PATIENTBUDDYDOCU - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 64, -1, "SYNC64 PATIENTBUDDYDOCUPAINCATEGORY - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 66, -1, "SYNC66 PATIENTDOCU - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 67, -1, "SYNC67 PRESCRIPTION - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 70, -1, "SYNC70 ABSENCE - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 71, -1, "SYNC71 MEDIATHUMBNAILS - GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 11, -1, "SYNC11 PRICELIST - GET GLOBAL, GET SET PRAXIS", serverDateTime));
+            iPraxDbContext.Add(Utilities.createSyncIndicator(createPraxisModel!.NewPraxisID, 12, -1, "SYNC12 TREATMENTS - GET GLOBAL, GET SET PRAXIS", serverDateTime));
+
+            iPraxDbContext.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            partialCreationFailure = true;
+            logger.LogError(ex, $"Fehler beim Anlegen der SyncIndicator für Praxis {createPraxisModel!.NewPraxisID}." + ex.Message);
+            throw new Exception($"Fehler beim Anlegen der SyncIndicator für Praxis {createPraxisModel!.NewPraxisID}. Die Praxis wurder erstellt aber die Adressen, Institutionen, Geräte, Spalten und User konnten nicht angelegt werden. ");
+        }
+
+        try
+        {
+            DateTime lowerBoundDate = new DateTime(2014, 1, 1);
+            List<TextBlock> defaultTextBlocks = iPraxDbContext.TextBlock.AsNoTracking().Where(x => x.PraxisID == createPraxisModel!.NewPraxisID && ((DateTime)x.DateSync!) > lowerBoundDate).ToList();
+
+            foreach (TextBlock defaultTextBlock in defaultTextBlocks)
+            {
+                //load up the price, and create a new treatment and price!!!
+                TextBlock textBlock = new TextBlock();
+                textBlock.DateCreated = defaultTextBlock.DateCreated;
+                textBlock.DateModified = defaultTextBlock.DateModified;
+                textBlock.DateSync = DateTime.Now;
+                textBlock.PraxisID = createPraxisModel!.NewPraxisID;
+                textBlock.TextCode = defaultTextBlock.TextCode;
+                textBlock.Text = defaultTextBlock.Text;
+                textBlock.Category = defaultTextBlock.Category;
+                textBlock.DocumentType = defaultTextBlock.DocumentType;
+                textBlock.UserIDModified = 999999;
+                textBlock.UUID = Guid.NewGuid();
+                textBlock.DeviceIDModified = 999999;
+                iPraxDbContext.Add(textBlock);
+            }
+
+            iPraxDbContext.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            partialCreationFailure = true;
+            logger.LogError(ex, $"Fehler beim Anlegen der TextBlock-Tabellen für Praxis {createPraxisModel!.NewPraxisID}." + ex.Message);
+            throw new Exception($"Fehler beim Anlegen der TextBlock-Tabellen für Praxis {createPraxisModel!.NewPraxisID}. Die Praxis wurder erstellt aber die Adressen, Institutionen, Geräte, Spalten und User konnten nicht angelegt werden. ");
+        }
+    }
+
+    private void CheckResetInputs()
+    {
+        if (!createPraxisModel!.isIpraxCash)
+        {
+            createPraxisModel!.NumTherapists = 1;
+            createPraxisModel!.NumDevices = 1;
+
+            UpdateDevices();
+            UpdateTherapists();
+        }
+    }
+
+    private PendingBillingChange GetPendingBillingChanges(string user, decimal price, BillingTypeEnum billingType, int paymentCondition, Guid entityUuid, string entityIprax, DateTime targetDate)
+    {
+        return new PendingBillingChange()
+        {
+            SourceSoftware = Program.EVENTLOG_SOURCE,
+            SourceUser = user,
+            PraxisID = createPraxisModel!.NewPraxisID,
+            PaymentCondition = (int)paymentCondition,
+            CustomerNo = createPraxisModel!.CustomerNo,
+            Price = price,
+            BillingUpdateEnum = Enum.GetName(billingType)!,
+            EntityUUID = entityUuid,
+            EntityIprax = entityIprax,
+            DateInvoiceStart = targetDate,
+            DateCreated = DateTime.Now,
+            DateModified = DateTime.Now
+        };
+    }
+
+    private void CreateAddresses()
+    {
+        try
+        {
+            using TriggerFriendlyIpraxDbContext iPraxDbContext = iPraxContextFactory.CreateDbContext();
+            //Address-Table
+            //Address PLZ City
+            Address address = new Address();
+            address.Street = Cryption.EncryptString(createPraxisModel!.InputAddress ?? "", CryptionKey!);
+            address.Zip = Cryption.EncryptString(createPraxisModel!.InputPlz ?? "", CryptionKey!);
+            address.City = Cryption.EncryptString(createPraxisModel!.InputCity ?? "", CryptionKey!);
+            address.AdditionalAddressInfo = Cryption.EncryptString("", CryptionKey!);
+            address.AddressTypeID = 3;
+            address.CountryID = -1;
+            address.DateCreated = DateTime.Now;
+            address.DateModified = DateTime.Now;
+            address.DateSync = DateTime.Now;
+            address.OptInstitutionName = Cryption.EncryptString("", CryptionKey!);
+            address.PatientUUID = Guid.Parse("00000000-0000-0000-0000-000000000000");
+            address.PraxisID = createPraxisModel!.NewPraxisID;
+            address.TherapistID = -1;
+            address.UserIDModified = 999999;
+            address.DeviceIDModified = 999999;
+            address.UUID = Guid.NewGuid();
+
+            iPraxDbContext.Add(address);
+
+            //Contact-Table
+            //Phone Mobile Mail
+            Contact contactPhone = new Contact();
+            contactPhone.ContactTypeID = 16; //Phone
+            contactPhone.DateCreated = DateTime.Now;
+            contactPhone.DateModified = DateTime.Now;
+            contactPhone.DateSync = DateTime.Now;
+            contactPhone.DeviceIDModified = 999999;
+            contactPhone.OptDescription = Cryption.EncryptString("", CryptionKey!);
+            contactPhone.PatientUUID = Guid.Parse("00000000-0000-0000-0000-000000000000");
+            contactPhone.PraxisID = createPraxisModel!.NewPraxisID;
+            contactPhone.TherapistID = -1;
+            contactPhone.UserIDModified = 999999;
+            contactPhone.UUID = Guid.NewGuid();
+            contactPhone.Value = Cryption.EncryptString(createPraxisModel!.InputPhone ?? "", CryptionKey!);
+            iPraxDbContext.Add(contactPhone);
+
+            Contact contactMobile = new Contact();
+            contactMobile.ContactTypeID = 32; //Mobile
+            contactMobile.DateCreated = DateTime.Now;
+            contactMobile.DateModified = DateTime.Now;
+            contactMobile.DateSync = DateTime.Now;
+            contactMobile.DeviceIDModified = 999999;
+            contactMobile.OptDescription = Cryption.EncryptString("", CryptionKey!);
+            contactMobile.PatientUUID = Guid.Parse("00000000-0000-0000-0000-000000000000");
+            contactMobile.PraxisID = createPraxisModel!.NewPraxisID;
+            contactMobile.TherapistID = -1;
+            contactMobile.UserIDModified = 999999;
+            contactMobile.UUID = Guid.NewGuid();
+            contactMobile.Value = Cryption.EncryptString(createPraxisModel!.InputMobile ?? "", CryptionKey!);
+            iPraxDbContext.Add(contactMobile);
+
+            Contact contactMail = new Contact();
+            contactMail.ContactTypeID = 64; //Mail
+            contactMail.DateCreated = DateTime.Now;
+            contactMail.DateModified = DateTime.Now;
+            contactMail.DateSync = DateTime.Now;
+            contactMail.DeviceIDModified = 999999;
+            contactMail.OptDescription = Cryption.EncryptString("", CryptionKey!);
+            contactMail.PatientUUID = Guid.Parse("00000000-0000-0000-0000-000000000000");
+            contactMail.PraxisID = createPraxisModel!.NewPraxisID;
+            contactMail.TherapistID = -1;
+            contactMail.UserIDModified = 999999;
+            contactMail.UUID = Guid.NewGuid();
+            contactMail.Value = Cryption.EncryptString(createPraxisModel!.InputMail ?? "", CryptionKey!);
+            iPraxDbContext.Add(contactMail);
+            iPraxDbContext.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, ex.Message);
+            partialCreationFailure = true;
+            throw new Exception("Die Adressen, Institutionen, Geräte, Spalten und User konnten nicht angelegt werden.");
+        }
+    }
+
+    private void CreateDevices(bool insertPendingBillingChange)
+    {
+        var user = authenticationStateProvider.GetAuthenticationStateAsync().Result.User.Identity!.Name;
+
+        try
+        {
+            using TriggerFriendlyIpraxDbContext iPraxDbContext = iPraxContextFactory.CreateDbContext();
+
+            int currentCount = 0;
+
+            DateTime serverDateTime = iPraxDbContext.Praxis.AsNoTracking().Select(x => DateTime.Now).First();
+
+            foreach (DeviceWithExtras deviceWithExtras in devicesWithExtras)
+            {
+                CreateDeviceData createDeviceData = new CreateDeviceData()
+                {
+                    Device = deviceWithExtras.Device,
+                    User = user,
+                    PraxisId = createPraxisModel!.NewPraxisID,
+                    CustomerNo = createPraxisModel!.CustomerNo,
+                    PaymentCondition = createPraxisModel!.inputPaymentCondition,
+                    CustomPrice = currentCount < 2 ? 0m : deviceWithExtras.Price,
+                    InsertBillingChange = insertPendingBillingChange,
+                    UpdateUnsyncedPraxisSettings = true,
+                    IPraxDbContextFactory = iPraxContextFactory,
+                    IPraxKundenportalContextFactory = iPraxKundenportalContextFactory,
+                    ServerDateTime = serverDateTime,
+                    BillingPrices = billingPrices,
+                    UnsyncedPraxisSettings = unsyncedPraxisSetting,
+                    TargetDate = _oneTimeInvoiceStart
+                };
+
+                Utilities.CreateDevice(createDeviceData, config);
+                currentCount++;
+            }
+        }
+        catch (Exception ex)
+        {
+            partialCreationFailure = true;
+            logger.LogError(ex, ex.Message);
+            throw new Exception("Die Geräte, Spalten und User konnten nicht angelegt werden.");
+        }
+    }
+
+    private Synchelper GetSyncHelper(int praxisID, int tableID, int syncNumber, DateTime lastSync)
+    {
+        Synchelper syncHelper = new Synchelper();
+        syncHelper.PraxisID = praxisID;
+        syncHelper.DateCreated = DateTime.Now;
+        syncHelper.DateModified = DateTime.Now;
+        syncHelper.DateLastSync = lastSync;
+        syncHelper.SyncSuccess = true;
+        syncHelper.TableID = tableID;
+        syncHelper.TableName = "Sync" + tableID;
+        syncHelper.UserIDModified = 999999;
+        syncHelper.UUID = Guid.NewGuid();
+        syncHelper.DeviceID = -1;
+        syncHelper.DateSync = DateTime.Now;
+        syncHelper.DeviceIDModified = 999999;
+
+        return syncHelper;
+    }
+
+    private void CreateInstitutions(bool insertPendingBillingChange)
+    {
+        string user = authenticationStateProvider.GetAuthenticationStateAsync().Result.User.Identity!.Name!;
+
+        try
+        {
+            foreach (InstitutionInfoWithExtras institutionInfoWithExtras in physiosWithExtras)
+            {
+                if (descriptionNeedsInstitution)
+                {
+                    praxisNameKeeper += "Physio ";
+                    descriptionNeedsInstitution = false;
+                }
+               
+                CreateInstitutionData physioData = new CreateInstitutionData
+                {
+                    InstitutionInfo = institutionInfoWithExtras.InstitutionInfo, 
+                    PaymentCondition = createPraxisModel!.inputPaymentCondition, 
+                    Type = 1, 
+                    RegionId = int.Parse(createPraxisModel!.InputRegion!), 
+                    User = user, 
+                    PraxisId = createPraxisModel!.NewPraxisID, 
+                    CustomerNo = createPraxisModel!.CustomerNo, 
+                    InsertPendingBillingChange = insertPendingBillingChange, 
+                    IncreaseMaxIkCount = true, 
+                    DbContextFactory = iPraxContextFactory, 
+                    IPraxKundenportalContextFactory = iPraxKundenportalContextFactory, 
+                    CryptionKey = CryptionKey, 
+                    UnsyncedPraxisSettings = unsyncedPraxisSetting, 
+                    CustomPriceMaxIk = institutionInfoWithExtras.IsFirstNonHeilpraktiker ? null : institutionInfoWithExtras.Price, 
+                    CustomPriceMonthly = institutionInfoWithExtras.IsFirstNonHeilpraktiker ? null : institutionInfoWithExtras.PriceMonthly, 
+                    FreeIk = !institutionInfoWithExtras.IsFirstNonHeilpraktiker && institutionInfoWithExtras.IsFree, 
+                    CopyPriceListheilPraktiker = false, 
+                    TargetDateOneTime = _oneTimeInvoiceStart, 
+                    TargetDatePeriodic = _periodicInvoiceStart
+                };
+                
+                Utilities.CreateInstitution(physioData);
+            }
+
+            foreach (InstitutionInfoWithExtras institutionInfoWithExtras in ergosWithExtras)
+            {
+                if (descriptionNeedsInstitution)
+                {
+                    praxisNameKeeper += "Ergo ";
+                    descriptionNeedsInstitution = false;
+                }
+                
+                CreateInstitutionData ergoData = new CreateInstitutionData
+                {
+                    InstitutionInfo = institutionInfoWithExtras.InstitutionInfo, 
+                    PaymentCondition = createPraxisModel!.inputPaymentCondition, 
+                    Type = 2, 
+                    RegionId = int.Parse(createPraxisModel!.InputRegion!), 
+                    User = user, 
+                    PraxisId = createPraxisModel!.NewPraxisID, 
+                    CustomerNo = createPraxisModel!.CustomerNo, 
+                    InsertPendingBillingChange = insertPendingBillingChange, 
+                    IncreaseMaxIkCount = true, 
+                    DbContextFactory = iPraxContextFactory, 
+                    IPraxKundenportalContextFactory = iPraxKundenportalContextFactory, 
+                    CryptionKey = CryptionKey, 
+                    UnsyncedPraxisSettings = unsyncedPraxisSetting, 
+                    CustomPriceMaxIk = institutionInfoWithExtras.IsFirstNonHeilpraktiker ? null : institutionInfoWithExtras.Price, 
+                    CustomPriceMonthly = institutionInfoWithExtras.IsFirstNonHeilpraktiker ? null : institutionInfoWithExtras.PriceMonthly, 
+                    FreeIk = !institutionInfoWithExtras.IsFirstNonHeilpraktiker && institutionInfoWithExtras.IsFree, 
+                    CopyPriceListheilPraktiker = false, 
+                    TargetDateOneTime = _oneTimeInvoiceStart, 
+                    TargetDatePeriodic = _periodicInvoiceStart
+                };
+                
+                Utilities.CreateInstitution(ergoData);
+            }
+
+            foreach (InstitutionInfoWithExtras institutionInfoWithExtras in logosWithExtras)
+            {
+                if (descriptionNeedsInstitution)
+                {
+                    praxisNameKeeper += "Logo ";
+                    descriptionNeedsInstitution = false;
+                }
+                
+                CreateInstitutionData logoData = new CreateInstitutionData
+                {
+                    InstitutionInfo = institutionInfoWithExtras.InstitutionInfo, 
+                    PaymentCondition = createPraxisModel!.inputPaymentCondition, 
+                    Type = 3, 
+                    RegionId = int.Parse(createPraxisModel!.InputRegion!), 
+                    User = user, 
+                    PraxisId = createPraxisModel!.NewPraxisID, 
+                    CustomerNo = createPraxisModel!.CustomerNo, 
+                    InsertPendingBillingChange = insertPendingBillingChange, 
+                    IncreaseMaxIkCount = true, 
+                    DbContextFactory = iPraxContextFactory, 
+                    IPraxKundenportalContextFactory = iPraxKundenportalContextFactory, 
+                    CryptionKey = CryptionKey, 
+                    UnsyncedPraxisSettings = unsyncedPraxisSetting, 
+                    CustomPriceMaxIk = institutionInfoWithExtras.IsFirstNonHeilpraktiker ? null : institutionInfoWithExtras.Price, 
+                    CustomPriceMonthly = institutionInfoWithExtras.IsFirstNonHeilpraktiker ? null : institutionInfoWithExtras.PriceMonthly, 
+                    FreeIk = !institutionInfoWithExtras.IsFirstNonHeilpraktiker && institutionInfoWithExtras.IsFree, 
+                    CopyPriceListheilPraktiker = false, 
+                    TargetDateOneTime = _oneTimeInvoiceStart, 
+                    TargetDatePeriodic = _periodicInvoiceStart
+                };
+                
+                Utilities.CreateInstitution(logoData);
+            }
+
+            foreach (InstitutionInfoWithExtras institutionInfoWithExtras in heilsWithExtras)
+            {
+                if (descriptionNeedsInstitution)
+                {
+                    praxisNameKeeper += "Heil ";
+                    descriptionNeedsInstitution = false;
+                }
+                
+                CreateInstitutionData heilData = new CreateInstitutionData
+                {
+                    InstitutionInfo = institutionInfoWithExtras.InstitutionInfo, 
+                    PaymentCondition = createPraxisModel!.inputPaymentCondition, 
+                    Type = 4, 
+                    RegionId = int.Parse(createPraxisModel!.InputRegion!), 
+                    User = user, 
+                    PraxisId = createPraxisModel!.NewPraxisID, 
+                    CustomerNo = createPraxisModel!.CustomerNo, 
+                    InsertPendingBillingChange = insertPendingBillingChange, 
+                    IncreaseMaxIkCount = true, 
+                    DbContextFactory = iPraxContextFactory, 
+                    IPraxKundenportalContextFactory = iPraxKundenportalContextFactory, 
+                    CryptionKey = CryptionKey, 
+                    UnsyncedPraxisSettings = unsyncedPraxisSetting, 
+                    CustomPriceMaxIk = 0, 
+                    CustomPriceMonthly = 0, 
+                    FreeIk = false, 
+                    CopyPriceListheilPraktiker = institutionInfoWithExtras.CopyPriceListHeilpraktiker, 
+                    TargetDateOneTime = _oneTimeInvoiceStart, 
+                    TargetDatePeriodic = _periodicInvoiceStart
+                };
+                
+                Utilities.CreateInstitution(heilData);
+            }
+
+            foreach (InstitutionInfoWithExtras institutionInfoWithExtras in podosWithExtras)
+            {
+                if (descriptionNeedsInstitution)
+                {
+                    praxisNameKeeper += "Podo ";
+                    descriptionNeedsInstitution = false;
+                }
+                
+                CreateInstitutionData pogoData = new CreateInstitutionData
+                {
+                    InstitutionInfo = institutionInfoWithExtras.InstitutionInfo, 
+                    PaymentCondition = createPraxisModel!.inputPaymentCondition, 
+                    Type = 5, 
+                    RegionId = int.Parse(createPraxisModel!.InputRegion!), 
+                    User = user, 
+                    PraxisId = createPraxisModel!.NewPraxisID, 
+                    CustomerNo = createPraxisModel!.CustomerNo, 
+                    InsertPendingBillingChange = insertPendingBillingChange, 
+                    IncreaseMaxIkCount = true, 
+                    DbContextFactory = iPraxContextFactory, 
+                    IPraxKundenportalContextFactory = iPraxKundenportalContextFactory, 
+                    CryptionKey = CryptionKey, 
+                    UnsyncedPraxisSettings = unsyncedPraxisSetting, 
+                    CustomPriceMaxIk = institutionInfoWithExtras.IsFirstNonHeilpraktiker ? null : institutionInfoWithExtras.Price, 
+                    CustomPriceMonthly = institutionInfoWithExtras.IsFirstNonHeilpraktiker ? null : institutionInfoWithExtras.PriceMonthly, 
+                    FreeIk = !institutionInfoWithExtras.IsFirstNonHeilpraktiker && institutionInfoWithExtras.IsFree, 
+                    CopyPriceListheilPraktiker = false, 
+                    TargetDateOneTime = _oneTimeInvoiceStart, 
+                    TargetDatePeriodic = _periodicInvoiceStart
+                };
+                
+                Utilities.CreateInstitution(pogoData);
+            }
+            
+            int keeperPraxisID = currentServer != CurrentServer.Live ? createPraxisModel!.NewPraxisID + 100000 : createPraxisModel!.NewPraxisID;
+            string nameKeeper = praxisNameKeeper + (string.IsNullOrWhiteSpace(createPraxisModel!.InputLastName) ? createPraxisModel!.InputPraxisname + " " + createPraxisModel!.Department : createPraxisModel!.InputLastName);
+            
+            praxisNameKeeper =  nameKeeper + ", ID " + keeperPraxisID;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, ex.Message);
+            partialCreationFailure = true;
+            throw new Exception("Die Institutionen, Geräte, Spalten und User konnten nicht angelegt werden.");
+        }
+    }
+
+    private void CreateTherapists()
+    {
+        try
+        {
+            int currentTherapistCount = 0;
+            int includedTherapistCount = GetIncludedTherapistCount();
+
+            using TriggerFriendlyIpraxDbContext iPraxDbContext = iPraxContextFactory.CreateDbContext();
+            using TriggerFriendlyIpraxKundenportalDbContext iPraxKundenportalDbContext = iPraxKundenportalContextFactory.CreateDbContext();
+
+            foreach (TherapistWithExtras therapistWithExtra in therapistsWithExtras)
+            {
+                therapistWithExtra.Therapist!.PraxisID = createPraxisModel!.NewPraxisID;
+                therapistWithExtra.Therapist.FirstName = Cryption.EncryptString("Therapeut " + (currentTherapistCount + 1), CryptionKey!);
+                therapistWithExtra.Therapist.LastName = Cryption.EncryptString("", CryptionKey!);
+                therapistWithExtra.Therapist.DateSync = DateTime.Now;
+
+                iPraxDbContext.Therapist.Add(therapistWithExtra.Therapist);
+                currentTherapistCount++;
+            }
+
+            iPraxDbContext.SaveChanges();
+
+            currentTherapistCount = 0;
+
+            string user = authenticationStateProvider.GetAuthenticationStateAsync().Result.User.Identity!.Name!;
+
+            if (!createPraxisModel!.isIpraxCash && !isTestPraxis)
+            {
+                foreach (TherapistWithExtras therapistWithExtra in therapistsWithExtras)
+                {
+                    iPraxKundenportalDbContext.PendingBillingChanges.Add(new PendingBillingChange()
+                    {
+                        SourceSoftware = Program.EVENTLOG_SOURCE,
+                        SourceUser = user,
+                        PraxisID = createPraxisModel!.NewPraxisID,
+                        CustomerNo = createPraxisModel!.CustomerNo,
+                        Price = currentTherapistCount < includedTherapistCount ? 0 : therapistWithExtra.PriceMonthly,
+                        BillingUpdateEnum = Enum.GetName(BillingTypeEnum.NewColumn)!,
+                        EntityUUID = therapistWithExtra.Therapist!.UUID,
+                        EntityIprax = therapistWithExtra.Therapist.GetType().Name,
+                        DateInvoiceStart = _periodicInvoiceStart,
+                        DateCreated = DateTime.Now,
+                        DateModified = DateTime.Now
+                    });
+
+                    currentTherapistCount++;
+                }
+            }
+            iPraxKundenportalDbContext.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, ex.Message);
+            partialCreationFailure = true;
+            throw new Exception("Die Spalten und User konnten nicht angelegt werden.");
+        }
+    }
+
+    private void UpdateTherapists()
+    {
+        int diff = createPraxisModel!.NumTherapists - therapistsWithExtras.Count();
+
+        decimal priceTherapist = Utilities.GetBillingPrice(billingPrices!, BillingTypeEnum.NewColumn);
+
+        if (diff < 0 && therapistsWithExtras.Where(x => x.PriceMonthly != priceTherapist).Any())
+        {
+            createPraxisModel!.NumTherapists = therapistsWithExtras.Count();
+            jsRuntime.InvokeVoidAsync("showCustomError", "Der Preis für eine Spalte wurde geändert, daher müssen die Spalten im Edit-Dialog gelöscht werden.");
+            return;
+        }
+
+        if (diff > 0)
+        {
+            for (int i = 0; i < Math.Abs(diff); i++)
+            {
+                therapistsWithExtras.Add(new TherapistWithExtras()
+                {
+                    Therapist = new Therapist()
+                    {
+                        DateCreated = DateTime.Now,
+                        UUID = Guid.NewGuid(),
+                        AddressID = -1,
+                        FirstName = "",
+                        LastName = "",
+                        UserIDModified = 999999,
+                        DeviceIDModified = 999999,
+                        PraxisID = createPraxisModel!.NewPraxisID,
+                        DateModified = DateTime.Now,
+                        ColumnID = 0,
+                        ValidFrom = new DateTime(1900, 01, 01, 0, 0, 0),
+                        ValidTill = new DateTime(3000, 01, 01, 0, 0, 0),
+                        DateSync = DateTime.Now
+                    },
+                    PriceMonthly = priceTherapist
+                });
+            }
+
+            SetTherapistColumnIds();
+        }
+        else
+        {
+            for (int i = 0; i < Math.Abs(diff); i++)
+            {
+                therapistsWithExtras.RemoveAt(therapistsWithExtras.Count() - 1);
+            }
+        }
+    }
+
+    private int GetIncludedTherapistCount()
+    {
+        return int.Max(createPraxisModel!.NumPhysio
+               + createPraxisModel!.NumPodo
+               + createPraxisModel!.NumErgo
+               + createPraxisModel!.NumLogo 
+               - GetFreeIkCount(), 1);
+    }
+    
+    private int GetFreeIkCount()
+    {
+        return physiosWithExtras.Count(x => x.IsFree) +
+               ergosWithExtras.Count(x => x.IsFree) +
+               logosWithExtras.Count(x => x.IsFree) +
+               podosWithExtras.Count(x => x.IsFree);
+    }
+    
+    private void SetTherapistColumnIds()
+    {
+        for (int i = 0; i < therapistsWithExtras.Count(); i++)
+        {
+            therapistsWithExtras[i].Therapist!.ColumnID = i + 1;
+        }
+    }
+
+    private void UpdateDevices()
+    {
+        int diff = createPraxisModel!.NumDevices - devicesWithExtras.Count();
+        decimal price = Utilities.GetBillingPrice(billingPrices!, BillingTypeEnum.NewMaxDevice);
+
+        if (diff < 0 && devicesWithExtras.Where(x => x.Price != price).Any())
+        {
+            createPraxisModel!.NumDevices = devicesWithExtras.Count();
+            jsRuntime.InvokeVoidAsync("showCustomError", "Der Preis für ein Gerät wurde manuell geändert, daher müssen die Geräte im Edit-Dialog gelöscht werden.");
+            return;
+        }
+
+        diff = Math.Abs(diff);
+
+        if (createPraxisModel!.NumDevices > devicesWithExtras.Count())
+        {
+            for (int i = 0; i < diff; i++)
+            {
+                devicesWithExtras.Add(new DeviceWithExtras()
+                {
+                    Device = new Device()
+                    {
+                        PraxisID = -1,
+                        DeviceNo = -1,
+                        GUID = Guid.NewGuid(),
+                        MacAddress = "111111111111",
+                        AdminActive = false,
+                        DateAdminActive = DateTime.Now,
+                        Name = "",
+                        Description = "",
+                        DeviceActive = true,
+                        DateValid = DateTime.Now.AddYears(100),
+                        Timeout = 60,
+                        Retries = 10,
+                        SyncMode = 2,
+                        DateCreated = DateTime.Now,
+                        DateModified = DateTime.Now,
+                        UserIDModified = 999999,
+                        UUID = Guid.NewGuid(),
+                        DateSync = DateTime.Now.AddSeconds(10),
+                        DeviceIDModified = 999999
+                    },
+                    Price = price
+                });
+            }
+        }
+        else
+        {
+            for (int i = 0; i < diff; i++)
+            {
+                devicesWithExtras.RemoveAt(devicesWithExtras.Count() - 1);
+            }
+        }
+    }
+    
+    private async Task ForceUpdateUI()
+    {
+        StateHasChanged();
+        await Task.Delay(10);
+    }
+
+    private bool IsDeviceIncluded(int currentPos)
+    {
+        return currentPos < 2;
+    }
+
+    private void ShowInstitutionEditDialog(int treatmentDirectoryId)
+    {
+        if (treatmentDirectoryId < 1 || treatmentDirectoryId > 5)
+        {
+            errorMessage = $"Die TreatmentDirectoryID {treatmentDirectoryId} ist keine gültige Institution.";
+            showErrorPopup = true;
+            return;
+        }
+
+        currentInstitutionEditType = treatmentDirectoryId;
+        currentInstitutionName = treatmentDirectoryId == 1 ? "Physiotherapie" :
+            treatmentDirectoryId == 2 ? "Ergotherapie" :
+            treatmentDirectoryId == 3 ? "Logopädie" :
+            treatmentDirectoryId == 4 ? "Heilpraktiker" :
+            "Podologie";
+
+        currentInstitutionInfosWithExtras = GetCurrentInstititutionWithExtrasList(treatmentDirectoryId);
+
+        showInstitutionInfoEditDialog = true;
+    }
+
+    private List<InstitutionInfoWithExtras>
+        GetCurrentInstititutionWithExtrasList(int treatmentDirectoryId)
+    {
+        return treatmentDirectoryId == 1 ? physiosWithExtras :
+            treatmentDirectoryId == 2 ? ergosWithExtras :
+            treatmentDirectoryId == 3 ? logosWithExtras :
+            treatmentDirectoryId == 4 ? heilsWithExtras :
+            podosWithExtras;
+    }
+
+    private void ResetInstitutionCount(int treatmentDirectoryId)
+    {
+        switch (treatmentDirectoryId)
+        {
+            case 1:
+                createPraxisModel!.NumPhysio = physiosWithExtras.Count();
+                break;
+            case 2:
+                createPraxisModel!.NumErgo = ergosWithExtras.Count();
+                break;
+            case 3:
+                createPraxisModel!.NumLogo = logosWithExtras.Count();
+                break;
+            case 4:
+                createPraxisModel!.NumHeil = heilsWithExtras.Count();
+                break;
+            case 5:
+                createPraxisModel!.NumPodo = podosWithExtras.Count();
+                break;
+            default:
+                jsRuntime.InvokeVoidAsync("showCustomError", $"Unbekannt TreatmentDirectoryId {treatmentDirectoryId}.");
+                break;
+        }
+    }
+
+    private void UpdateInstitutions(int treatmentDirectoryId)
+    {
+        List<InstitutionInfoWithExtras> institutionInfosWithExtras = GetCurrentInstititutionWithExtrasList(treatmentDirectoryId);
+
+        int countCurrent = treatmentDirectoryId == 1 ? createPraxisModel!.NumPhysio :
+            treatmentDirectoryId == 2 ? createPraxisModel!.NumErgo :
+            treatmentDirectoryId == 3 ? createPraxisModel!.NumLogo :
+            treatmentDirectoryId == 4 ? createPraxisModel!.NumHeil :
+            createPraxisModel!.NumPodo;
+
+        int diff = countCurrent - institutionInfosWithExtras.Count();
+
+        decimal price = Utilities.GetBillingPrice(billingPrices!, BillingTypeEnum.NewMaxIk);
+        decimal priceMonthly = Utilities.GetBillingPrice(billingPrices!, BillingTypeEnum.ActivatedIk);
+
+        if (diff < 0 && treatmentDirectoryId != 4 && (institutionInfosWithExtras.Where(x => x.Price != price).Any() || institutionInfosWithExtras.Where(x => x.PriceMonthly != priceMonthly).Any()))
+        {
+            ResetInstitutionCount(treatmentDirectoryId);
+            jsRuntime.InvokeVoidAsync("showCustomError", "Der Preis für eine Institution wurde geändert, daher müssen die Institutionen im Edit-Dialog gelöscht werden.");
+            return;
+        }
+
+        if (diff > 0)
+        {
+            for (int i = 0; i < Math.Abs(diff); i++)
+            {
+                AddInstitutionWithExtras(treatmentDirectoryId);
+            }
+        }
+        else
+        {
+            for (int i = 0; i < Math.Abs(diff); i++)
+            {
+                institutionInfosWithExtras.RemoveAt(institutionInfosWithExtras.Count() - 1);
+            }
+        }
+
+        switch (treatmentDirectoryId)
+        {
+            case 1:
+                physiosWithExtras = institutionInfosWithExtras;
+                break;
+            case 2:
+                ergosWithExtras = institutionInfosWithExtras;
+                break;
+            case 3:
+                logosWithExtras = institutionInfosWithExtras;
+                break;
+            case 4:
+                heilsWithExtras = institutionInfosWithExtras;
+                break;
+            case 5:
+                podosWithExtras = institutionInfosWithExtras;
+                break;
+            default:
+                break;
+        }
+
+        SetIsFirstNonHeilPraktikerIk();
+    }
+
+    private void AddInstitutionWithExtras(int treatmentDirectoryId)
+    {
+        InstitutionInfoWithExtras institutionInfoWithExtras = new InstitutionInfoWithExtras()
+        {
+            InstitutionInfo = new InstitutionInfo()
+            {
+                UUID = Guid.NewGuid(),
+                PraxisID = -1,
+                UserIDModified = 999999,
+                DeviceIDModified = 999999,
+                RegionID = -1,
+                TreatmentDirectoryID = treatmentDirectoryId
+            },
+            Price = treatmentDirectoryId != 4 ? Utilities.GetBillingPrice(billingPrices!, BillingTypeEnum.NewMaxIk) : 0m,
+            PriceMonthly = treatmentDirectoryId != 4 ? Utilities.GetBillingPrice(billingPrices!, BillingTypeEnum.ActivatedIk) : 0m
+        };
+
+        switch (treatmentDirectoryId)
+        {
+            case 1:
+                physiosWithExtras.Add(institutionInfoWithExtras);
+                currentInstitutionInfosWithExtras = physiosWithExtras;
+                createPraxisModel!.NumPhysio = physiosWithExtras.Count();
+                break;
+            case 2:
+                ergosWithExtras.Add(institutionInfoWithExtras);
+                currentInstitutionInfosWithExtras = ergosWithExtras;
+                createPraxisModel!.NumErgo = ergosWithExtras.Count();
+                break;
+            case 3:
+                logosWithExtras.Add(institutionInfoWithExtras);
+                currentInstitutionInfosWithExtras = logosWithExtras;
+                createPraxisModel!.NumLogo = logosWithExtras.Count();
+                break;
+            case 4:
+                heilsWithExtras.Add(institutionInfoWithExtras);
+                currentInstitutionInfosWithExtras = heilsWithExtras;
+                createPraxisModel!.NumHeil = heilsWithExtras.Count();
+                break;
+            case 5:
+                podosWithExtras.Add(institutionInfoWithExtras);
+                currentInstitutionInfosWithExtras = podosWithExtras;
+                createPraxisModel!.NumPodo = podosWithExtras.Count();
+                break;
+            default:
+                break;
+        }
+
+        SetIsFirstNonHeilPraktikerIk();
+    }
+
+    private void RemoveInstitutionWithExtras(int treatmentDirectoryId, InstitutionInfoWithExtras institutionInfoWithExtras)
+    {
+        switch (treatmentDirectoryId)
+        {
+            case 1:
+                physiosWithExtras.Remove(institutionInfoWithExtras);
+                currentInstitutionInfosWithExtras = physiosWithExtras;
+                createPraxisModel!.NumPhysio = physiosWithExtras.Count();
+                break;
+            case 2:
+                ergosWithExtras.Remove(institutionInfoWithExtras);
+                currentInstitutionInfosWithExtras = ergosWithExtras;
+                createPraxisModel!.NumErgo = ergosWithExtras.Count();
+                break;
+            case 3:
+                logosWithExtras.Remove(institutionInfoWithExtras);
+                currentInstitutionInfosWithExtras = logosWithExtras;
+                createPraxisModel!.NumLogo = logosWithExtras.Count();
+                break;
+            case 4:
+                heilsWithExtras.Remove(institutionInfoWithExtras);
+                currentInstitutionInfosWithExtras = heilsWithExtras;
+                createPraxisModel!.NumHeil = heilsWithExtras.Count();
+                break;
+            case 5:
+                podosWithExtras.Remove(institutionInfoWithExtras);
+                currentInstitutionInfosWithExtras = podosWithExtras;
+                createPraxisModel!.NumPodo = podosWithExtras.Count();
+                break;
+            default:
+                break;
+        }
+
+        SetIsFirstNonHeilPraktikerIk();
+    }
+
+    private void SetIsFirstNonHeilPraktikerIk()
+    {
+        bool isFirstIsSet = physiosWithExtras.Any(x => x.IsFirstNonHeilpraktiker)
+                            || physiosWithExtras.Any(x => x.IsFirstNonHeilpraktiker)
+                            || ergosWithExtras.Any(x => x.IsFirstNonHeilpraktiker)
+                            || logosWithExtras.Any(x => x.IsFirstNonHeilpraktiker)
+                            || podosWithExtras.Any(x => x.IsFirstNonHeilpraktiker);
+
+        decimal priceNewMaxIK = Utilities.GetBillingPrice(billingPrices!, BillingTypeEnum.NewMaxIk);
+        decimal priceIKMonthly = Utilities.GetBillingPrice(billingPrices!, BillingTypeEnum.ActivatedIk);
+
+        if (!isFirstIsSet)
+        {
+            if (physiosWithExtras.Any())
+            {
+                physiosWithExtras.First().IsFirstNonHeilpraktiker = true;
+                physiosWithExtras.First().Price = priceNewMaxIK;
+                physiosWithExtras.First().PriceMonthly = priceIKMonthly;
+            }
+            else if (ergosWithExtras.Any())
+            {
+                ergosWithExtras.First().IsFirstNonHeilpraktiker = true;
+                ergosWithExtras.First().Price = priceNewMaxIK;
+                ergosWithExtras.First().PriceMonthly = priceIKMonthly;
+            }
+            else if (logosWithExtras.Any())
+            {
+                logosWithExtras.First().IsFirstNonHeilpraktiker = true;
+                logosWithExtras.First().Price = priceNewMaxIK;
+                logosWithExtras.First().PriceMonthly = priceIKMonthly;
+            }
+            else if (podosWithExtras.Any())
+            {
+                podosWithExtras.First().IsFirstNonHeilpraktiker = true;
+                podosWithExtras.First().Price = priceNewMaxIK;
+                podosWithExtras.First().PriceMonthly = priceIKMonthly;
+            }
+        }
+    }
+
+    private void CreateUsers()
+    {
+        try
+        {
+            AddUser(1);
+            AddUser(2);
+            AddUser(3);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, ex.Message);
+            partialCreationFailure = true;
+            throw new Exception("Die User konnten nicht angelegt werden.");
+        }
+    }
+
+    private void AddUser(int userType)
+    {
+        using TriggerFriendlyIpraxDbContext iPraxDbContext = iPraxContextFactory.CreateDbContext();
+        
+        User user = new User();
+        user.DateCreated = DateTime.Now;
+        user.UUID = Guid.NewGuid();
+        user.LastLogin = DateTime.Now;
+
+        user.Active = true;
+        user.AddressID = -1;
+        user.DateModified = DateTime.Now;
+        user.Email = "";
+        user.FirstName = "";
+        user.LastName = "";
+        user.PraxisID = createPraxisModel!.NewPraxisID;
+        user.UserIDModified = 999999;
+        user.DeviceIDModified = 999999;
+        user.DateSync = DateTime.Now;
+        switch (userType)
+        {
+            case 1: //boss
+                user.UserName = "boss";
+                user.CryptionKey = Cryption.GetCryptionKey(bossPW!, createPraxisModel!.NewPraxisID, CryptionKey!);
+                user.Password = Cryption.GetHashedUserPassword(bossPW!);
+                break;
+            case 2: //staff
+                user.UserName = "staff";
+                user.CryptionKey = "0000000000000000000000000000000000000000000=0000000000000000000000000000000000000000000=";
+                user.Password = "0000000000000000000000000000000000000000000=#00000000000000000000000000000000000000000000000000000000000000000000000000000000000000==";
+                break;
+            default: //office
+                user.UserName = "office";
+                user.CryptionKey = "0000000000000000000000000000000000000000000=0000000000000000000000000000000000000000000=";
+                user.Password = "0000000000000000000000000000000000000000000=#00000000000000000000000000000000000000000000000000000000000000000000000000000000000000==";
+                break;
+        }
+
+        user.UserTypeID = userType;
+        iPraxDbContext.Add(user);
+        iPraxDbContext.SaveChanges();
+        iPraxDbContext.Entry(user).Reload(); // We need to save the user to let the database create the User.ID
+
+        DateTime serverDate = Utilities.GetServerDateTime(Utilities.GetConnectionStringIprax());
+
+        Settings setting = new Settings()
+        {
+            PraxisID = createPraxisModel!.NewPraxisID,
+            DeviceID = -1,
+            UserID = user.ID,
+            Type = 3,
+            ValueType = 1,
+            Value = "",
+            DateCreated = serverDate,
+            DateModified = serverDate,
+            UserIDModified = 999999,
+            UUID = Guid.NewGuid(),
+            DateSync = serverDate,
+            DeviceIDModified = 999999
+        };
+
+        setting.UserID = user.ID;
+        if (user.UserTypeID == 1) //Boss - Permissions auf 2**16-1 gesetzt => relevant falls mehr als 15 Permissions vorhanden sind
+        {
+            setting.Value = "65535";
+            iPraxDbContext.Add(setting);
+        }
+
+        if (user.UserTypeID == 2) //Staff
+        {
+            setting.Value = "4";
+            iPraxDbContext.Add(setting);
+        }
+
+        if (user.UserTypeID == 3) //Office
+        {
+            setting.Value = "7";
+            iPraxDbContext.Add(setting);
+        }
+
+        iPraxDbContext.SaveChanges();
+    }
+
+    private async void DownloadPdfForNewPraxis()
+    {
+        try
+        {
+            loadingPdf = true;
+            await ForceUpdateUI();
+
+            await Utilities.DownloadFile($"Zugangsdaten_PraxisID{createPraxisModel!.NewPraxisID}.zip",
+                HtmlTemplateGenerationHelper.GetZipFileForNewPraxis(createPraxisModel!.NewPraxisID, bossPW!, navigationManager.BaseUri, iPraxContextFactory, iPraxKundenportalContextFactory),
+                jsRuntime);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            showErrorPopup = true;
+        }
+        finally
+        {
+            loadingPdf = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CreateKeeperData(bool createKeeperEntries)
+    {
+        if (!createKeeperEntries)
+        {
+            return;
+        }
+        
+        keeperError = null;
+
+        bool isRfhmPraxis = new [] { 3, 4, 5 }.Contains(createPraxisModel!.CashSettingInt);
+
+        await using (var utilsAccess = new KeeperUtils(logger, new JsonConfigurationStorage("C:\\ipraxconfig\\keeperconfig.json"), KeeperUtils.CreateKeeperAuthDataFromFile("C:\\ipraxconfig\\keeperauth.json")))
+        {
+            await utilsAccess.Login();
+
+            if (currentServer == CurrentServer.Live)
+            {
+                if (Environment.MachineName.ToLower().Contains("webserver-"))
+                {
+                    keeperError = await utilsAccess.AddKeyIfNotExists("ID " + createPraxisModel!.NewPraxisID, createPraxisModel!.NewPraxisID, CryptionKey!, Utils.Utils.GetCurrentServerByIP() == CurrentServer.Live, bossPW!, isRfhmPraxis);
+                }
+                else
+                {
+                    throw new Exception(@$"Expected Server: ""WebServer-"". Actual server: ""{Environment.MachineName}""");
+                }
+            }
+            else
+            {
+                keeperError = await utilsAccess.AddKeyIfNotExists("TEST: ID " + (createPraxisModel!.NewPraxisID + 100000), createPraxisModel!.NewPraxisID + 100000, CryptionKey!, Utils.Utils.GetCurrentServerByIP() == CurrentServer.Live, bossPW!, isRfhmPraxis);
+            }
+        }
+
+        if (keeperError is not null)
+        {
+            logger.LogWarning("Keeper error: \n\n " + keeperError);    
+        }
+        
+        sendSuccessful = keeperError == null;    
+    }
+
+    private async Task UpdateKeeperTitleIfExists(bool createKeeperEntries)
+    {
+        if (!createKeeperEntries)
+        {
+            return;
+        }
+        
+        keeperError = null;
+
+        await using (var keeperUtils = new KeeperUtils(logger, new JsonConfigurationStorage("C:\\ipraxconfig\\keeperconfig.json"), KeeperUtils.CreateKeeperAuthDataFromFile("C:\\ipraxconfig\\keeperauth.json")))
+        {
+            await keeperUtils.Login();
+
+            if (currentServer == CurrentServer.Live)
+            {
+                if (Environment.MachineName.ToLower().Contains("webserver-"))
+                {
+                    keeperError = await keeperUtils.UpdateTitleIfExists("ID " + createPraxisModel!.NewPraxisID, praxisNameKeeper!, createPraxisModel!.NewPraxisID, logger);
+                }
+                else
+                {
+                    throw new Exception(@$"Expected Server: ""WebServer-"". Actual server: ""{Environment.MachineName}""");
+                }
+            }
+            else
+            {
+                praxisNameKeeper = praxisNameKeeper = "Test: " + praxisNameKeeper;
+                keeperError = await keeperUtils.UpdateTitleIfExists("TEST: ID " + (createPraxisModel!.NewPraxisID + 100000), praxisNameKeeper, createPraxisModel!.NewPraxisID + 100000, logger);
+            }
+        }
+        
+        if (keeperError is not null)
+        {
+            logger.LogWarning("Keeper error: \n\n " + keeperError);    
+        }
+        
+        sendSuccessful = keeperError == null;
+    }
+    
+    private async void ForceReloadCreatePraxisWithCheck(int praxisId)
+    {
+        if (sendSuccessful || cryptionKeySavedManually)
+        {
+            navigationManager.NavigateTo($"{navigationManager.BaseUri}General/PraxisInfo/Praxis/{praxisId}");
+        }
+        else
+        {
+            errorMessage = "Die Bestätigung, dass der Praxis-Key manuell hinterlegt wurde, fehlt. Bitte verlasse diese Seite erst, wenn der Praxis-Key manuell in Keeper hinterlegt wurde.";
+            showErrorPopup = true;
+            await ForceUpdateUI();
+        }
+    }
+}
